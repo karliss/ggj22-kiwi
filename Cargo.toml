@@ -1,0 +1,12 @@
+[package]
+name = "ggj22-kiwi"
+authors = ["KārlisS", "Rollick"]
+license = "CC-BY-NC-SA-4.0"
+license-file = "LICENSE.txt"
+version = "0.1.0"
+edition = "2021"
+categories = ["games"]
+readme = "README.md"
+
+[dependencies]
+crossterm="0.20.0"
