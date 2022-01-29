@@ -31,6 +31,7 @@ pub struct LevelEditor
     mode: EditorMode,
     path: Option<Box<std::path::Path>>,
     paintMode: PaintMode,
+    test_runer: LevelRunner,
 }
 
 fn buffer_size() -> (u16, u16)
@@ -55,6 +56,7 @@ enum EditorMode {
     ErrorMessage,
     Paint,
     SetMarkers,
+    Play
 }
 
 #[derive(Debug, PartialEq, Eq, Copy, Clone)]
@@ -76,6 +78,7 @@ impl LevelEditor {
             mode: EditorMode::View,
             path: None,
             paintMode: PaintMode::WhiteBackgroundNormal,
+            test_runer: LevelRunner::new(ui),
         };
         result.fill_level();
         result
@@ -298,6 +301,16 @@ impl LevelEditor {
         execute!(ui.stdout, crossterm::terminal::EnterAlternateScreen)
     }
 
+    fn start_level_test(&mut self, pos: V2) {
+        self.test_runer.level = self.level.clone();
+        self.test_runer.pos = pos;
+        self.mode = EditorMode::Play;
+    }
+
+    fn start_level_test_normal(&mut self) {
+        self.start_level_test(self.level.p0);
+    }
+
     fn paint_cell_here(&mut self, pos: V2) {
         let mut cell = self.level[pos];
         match self.paintMode {
@@ -326,15 +339,33 @@ impl LevelEditor {
         self.cursor_pos = self.cursor_pos + dir;
         self.paint_cell_here(self.cursor_pos);
     }
+
+    fn handle_test_play(&mut self, ev: Option<UiEvent>) -> Option<UiEvent> {
+        match ev {
+            Some(UiEvent{id: _, e : UiEventType::Canceled}) |
+            Some(UiEvent{id: _, e : UiEventType::Ok}) |
+            Some(UiEvent{id: _, e : UiEventType::Result(_)}) => {
+                self.mode = EditorMode::View;
+                self.event(UiEventType::Changed)
+            }
+            _ => ev
+        }
+    }
 }
 
 impl UiWidget for LevelEditor {
     fn print(&mut self, ui: &mut UiContext) -> std::io::Result<()> {
         if self.need_refresh() {
-            if self.mode != EditorMode::ErrorMessage {
-                queue!(ui.stdout, terminal::Clear(terminal::ClearType::All), style::ResetColor)?;
-                self.print_level(ui)?;
-                ui.stdout.flush()?
+            match self.mode {
+                EditorMode::ErrorMessage => {}
+                EditorMode::Play => {
+                    self.test_runer.print(ui);
+                }
+                _ => {
+                    queue!(ui.stdout, terminal::Clear(terminal::ClearType::All), style::ResetColor)?;
+                    self.print_level(ui)?;
+                    ui.stdout.flush()?
+                }
             }
         }
         Ok(())
@@ -342,15 +373,30 @@ impl UiWidget for LevelEditor {
 
     fn input(&mut self, e: &Event, ui: &mut UiContext) -> Option<UiEvent> {
         self.mark_refresh(true);
-        if self.mode == EditorMode::ErrorMessage {
-            // press any key to exit error mode
-            return match e {
-                Event::Key(_) => {
-                    self.switch_to_edit(ui);
-                    self.event(UiEventType::Changed)
+        match self.mode {
+            EditorMode::ErrorMessage => {
+                // press any key to exit error mode
+                return match e {
+                    Event::Key(_) => {
+                        self.switch_to_edit(ui);
+                        self.event(UiEventType::Changed)
+                    }
+                    _ => None
+                };
+            }
+            EditorMode::Play => {
+                match e {
+                    Event::Key(KeyEvent { code: KeyCode::Esc, modifiers: KeyModifiers::NONE }) => {
+                        self.mode = EditorMode::View;
+                        return self.event(UiEventType::Changed)
+                    }
+                    _ => {
+                        let r = self.test_runer.input(e, ui);
+                        return self.handle_test_play(r);
+                    }
                 }
-                _ => None
-            };
+            }
+            _ => {}
         }
         let v = match e {
             Event::Key(KeyEvent { code: KeyCode::Up, modifiers: KeyModifiers::NONE }) => {
@@ -393,6 +439,14 @@ impl UiWidget for LevelEditor {
             }
             Event::Key(KeyEvent { code: KeyCode::F(6), modifiers: KeyModifiers::NONE }) => {
                 self.mode = EditorMode::SetMarkers;
+                self.event(UiEventType::Changed)
+            }
+            Event::Key(KeyEvent { code: KeyCode::F(8), modifiers: KeyModifiers::NONE }) => {
+                self.start_level_test_normal();
+                self.event(UiEventType::Changed)
+            }
+            Event::Key(KeyEvent { code: KeyCode::F(8), modifiers: KeyModifiers::SHIFT }) => {
+                self.start_level_test(self.cursor_pos);
                 self.event(UiEventType::Changed)
             }
             Event::Key(KeyEvent { code: KeyCode::F(9), modifiers: KeyModifiers::NONE }) => {
@@ -563,7 +617,9 @@ impl UiWidget for LevelEditor {
                     _ => None
                 }
             }
-            EditorMode::ErrorMessage => None
+            // already handled
+            EditorMode::ErrorMessage => None,
+            EditorMode::Play => None
         };
         None
     }
@@ -631,6 +687,7 @@ impl LevelRunner {
     fn print_level(&mut self, ui: &mut UiContext) -> std::io::Result<()> {
         let size = ui.buffer_size();
         let mut visible_rect = self.get_view_rect();
+        let level_rect = self.level.bounds();
         queue!(ui.stdout, cursor::Hide)?;
         for y in 0..size.1 {
             let mut reposition = true;
@@ -638,6 +695,11 @@ impl LevelRunner {
                 let mut pos = V2::make(x as i32, y as i32);
 
                 pos = pos + self.view_corner;
+                if !level_rect.contains(pos) {
+                    continue;
+                    reposition = true;
+                }
+
                 let cell = self.level[pos];
                 if reposition {
                     queue!(ui.stdout, cursor::MoveTo(x, y))?;
@@ -716,7 +778,9 @@ impl LevelRunner {
 impl UiWidget for LevelRunner {
     fn print(&mut self, ui: &mut UiContext) -> std::io::Result<()> {
         if self.need_refresh {
+            queue!(ui.stdout,Clear(ClearType::All));
             self.print_level(ui)?;
+            ui.stdout.flush();
         }
         Ok(())
     }
@@ -725,6 +789,18 @@ impl UiWidget for LevelRunner {
         match e {
             Event::Key(KeyEvent { code: KeyCode::Up, modifiers: KeyModifiers::NONE }) => {
                 self.move_with_ui(V2::make(0, -1), ui);
+                self.event(UiEventType::Changed)
+            }
+            Event::Key(KeyEvent { code: KeyCode::Down, modifiers: KeyModifiers::NONE }) => {
+                self.move_with_ui(V2::make(0, 1), ui);
+                self.event(UiEventType::Changed)
+            }
+            Event::Key(KeyEvent { code: KeyCode::Left, modifiers: KeyModifiers::NONE }) => {
+                self.move_with_ui(V2::make(-1, 0), ui);
+                self.event(UiEventType::Changed)
+            }
+            Event::Key(KeyEvent { code: KeyCode::Right, modifiers: KeyModifiers::NONE }) => {
+                self.move_with_ui(V2::make(1, 0), ui);
                 self.event(UiEventType::Changed)
             }
             _ => None
