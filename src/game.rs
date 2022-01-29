@@ -262,7 +262,8 @@ impl UiWidget for LevelEditor {
                         self.mode = EditorMode::View;
                         self.event(UiEventType::Changed)
                     }
-                    Event::Key(KeyEvent { code: KeyCode::Backspace, modifiers: KeyModifiers::NONE }) => {
+                    Event::Key(KeyEvent { code: KeyCode::Backspace, modifiers: KeyModifiers::NONE }) |
+                    Event::Key(KeyEvent { code: KeyCode::Char('h'), modifiers: KeyModifiers::CONTROL })=> {
                         self.cursor_pos.x -= 1;
                         let mut data = self.level[self.cursor_pos];
                         data.letter = '\0';
