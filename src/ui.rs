@@ -33,7 +33,7 @@ pub struct UiEvent {
 
 pub trait UiWidget {
     fn print(&mut self, ui: &mut UiContext) -> std::io::Result<()>;
-    fn input(&mut self, _e: &Event) -> Option<UiEvent> {
+    fn input(&mut self, _e: &Event, ui: &mut UiContext) -> Option<UiEvent> {
         self.mark_refresh(true);
         return None;
     }
@@ -124,7 +124,7 @@ impl UiWidget for Menu {
         Ok(())
     }
 
-    fn input(&mut self, e: &Event) -> Option<UiEvent> {
+    fn input(&mut self, e: &Event, ui: &mut UiContext) -> Option<UiEvent> {
         self.mark_refresh(true);
         match e {
             Event::Key(KeyEvent { code: KeyCode::Down, modifiers: KeyModifiers::NONE }) => {
@@ -253,7 +253,8 @@ impl<'a> UiContext<'a> {
                                 return Ok(());
                             }
                             _ => {
-                                if self.should_exit(main_id, widget.input(&event)) {
+                                let r = widget.input(&event, self);
+                                if self.should_exit(main_id, r) {
                                     return Ok(());
                                 }
                             }

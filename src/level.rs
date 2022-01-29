@@ -1,17 +1,18 @@
 use std::ops::{Index, IndexMut};
 use crate::vecmath::V2;
+use serde::{Serialize, Deserialize};
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Serialize, Deserialize)]
 pub enum CellColor {
     White,
     Black,
 }
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Serialize, Deserialize)]
 pub struct Cell {
     pub letter: char,
     pub background: CellColor,
-    pub foreGround: CellColor,
+    pub foreground: CellColor,
 }
 
 impl Cell {
@@ -21,7 +22,7 @@ impl Cell {
 static EMPTY_CELL: Cell = Cell {
     letter: '\0',
     background: CellColor::Black,
-    foreGround: CellColor::Black,
+    foreground: CellColor::Black,
 };
 
 impl Cell {
@@ -35,6 +36,7 @@ impl Cell {
     }
 }
 
+#[derive(Serialize, Deserialize)]
 pub struct Level {
     pub data: Vec<Vec<Cell>>,
     pub width: i32,

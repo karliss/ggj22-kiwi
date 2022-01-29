@@ -1,11 +1,12 @@
-use std::io::Write;
+use std::io::{Error, ErrorKind, Write};
 use std::default::{self, Default};
+use std::fs::File;
+use std::path::Path;
 use crossterm::{
     cursor::{self, position},
     event::{DisableMouseCapture, EnableMouseCapture, Event, KeyCode, poll, read, KeyEvent, KeyModifiers},
     execute,
     queue,
-    Result,
     style::{self, Color, Attribute, Stylize},
     terminal::{self, disable_raw_mode, enable_raw_mode},
 };
@@ -28,6 +29,7 @@ pub struct LevelEditor
     wrap_pos: V2,
     need_refresh: bool,
     mode: EditorMode,
+    path: Option<Box<std::path::Path>>
 }
 
 fn buffer_size() -> (u16, u16)
@@ -49,6 +51,7 @@ fn get_color(c: CellColor) -> Color {
 enum EditorMode {
     View,
     WriteText,
+    ErrorMessage,
 }
 
 impl LevelEditor {
@@ -61,9 +64,58 @@ impl LevelEditor {
             wrap_pos: V2::new(),
             need_refresh: true,
             mode: EditorMode::View,
+            path: None,
         };
         result.fill_level();
         result
+    }
+
+    pub fn new_from_path(ui: &mut UiContext, path: &Path) -> std::io::Result<LevelEditor> {
+        let mut result = LevelEditor {
+            id: ui.next_id(),
+            level: Level::new(50, 50),
+            cursor_pos: V2::new(),
+            view_corner: V2::new(),
+            wrap_pos: V2::new(),
+            need_refresh: true,
+            mode: EditorMode::View,
+            path: Some(path.into()),
+        };
+        if path.is_file() {
+            let file = std::fs::File::open(path)?;
+            let yaml : serde_yaml::Result<Level> = serde_yaml::from_reader(file);
+            match yaml {
+                Ok(res) => {
+                    result.level = res
+                }
+                Err(e) => {
+                    eprintln!("Failed to load level '{}': {}", path.to_string_lossy(), e);
+                    return Err(Error::from(ErrorKind::InvalidData));
+                }
+            }
+        } else {
+            result.fill_level();
+        }
+        Ok(result)
+    }
+
+    pub fn save(&self) -> std::io::Result<()> {
+        match &self.path {
+            Some(path) => {
+                let mut ofile = File::create(path)?;
+                serde_yaml::to_writer(&ofile, &self.level).map_err(|e|
+                    {
+                        eprintln!("Can't save: {}", e);
+                        ErrorKind::InvalidData
+                    }
+                )?;
+                Ok(())
+            }
+            None => {
+                eprintln!("Can't save, no path specified");
+                Ok(())
+            }
+        }
     }
 
     fn fill_level(&mut self)
@@ -74,10 +126,10 @@ impl LevelEditor {
                 let mut cell = Cell::make_empty();
                 if x % 20 == 1 {
                     cell.background = CellColor::White;
-                    cell.foreGround = CellColor::Black;
+                    cell.foreground = CellColor::Black;
                 } else {
                     cell.background = CellColor::Black;
-                    cell.foreGround = CellColor::White;
+                    cell.foreground = CellColor::White;
                 }
                 self.level.set(pos, cell);
             }
@@ -113,7 +165,7 @@ impl LevelEditor {
                 pos = pos + self.view_corner;
                 let cell = self.level[pos];
                 if reposition {
-                    queue!(ui.stdout, cursor::MoveTo(x, y));
+                    queue!(ui.stdout, cursor::MoveTo(x, y))?;
                     reposition = false;
                 }
                 let mut c = cell.letter;
@@ -121,7 +173,7 @@ impl LevelEditor {
                     c = ' '
                 }
                 queue!(ui.stdout, style::PrintStyledContent(style::style(c)
-                        .with(get_color(cell.foreGround))
+                        .with(get_color(cell.foreground))
                         .on(get_color(cell.background))))?;
             }
         }
@@ -159,20 +211,53 @@ impl LevelEditor {
             self.view_corner.y = pos.y + PADDING - size.y;
         }
     }
+
+    fn switch_to_err(&mut self, ui: &mut UiContext) -> std::io::Result<()>
+    {
+        self.mode = EditorMode::ErrorMessage;
+        execute!(ui.stdout, crossterm::terminal::LeaveAlternateScreen)?;
+        disable_raw_mode()
+    }
+
+    fn show_err(&mut self, ui: &mut UiContext, text: &str) -> std::io::Result<()>
+    {
+        self.switch_to_err(ui)?;
+        execute!(ui.stdout, cursor::MoveToNextLine(1))?;
+        eprintln!("{}", text);
+        Ok(())
+    }
+
+    fn switch_to_edit(&mut self, ui: &mut UiContext) -> std::io::Result<()> {
+        self.mode = EditorMode::View;
+        enable_raw_mode()?;
+        execute!(ui.stdout, crossterm::terminal::EnterAlternateScreen)
+    }
 }
 
 impl UiWidget for LevelEditor {
     fn print(&mut self, ui: &mut UiContext) -> std::io::Result<()> {
         if self.need_refresh() {
-            queue!(ui.stdout, terminal::Clear(terminal::ClearType::All), style::ResetColor)?;
-            self.print_level(ui)?;
-            ui.stdout.flush()?
+            if self.mode != EditorMode::ErrorMessage {
+                queue!(ui.stdout, terminal::Clear(terminal::ClearType::All), style::ResetColor)?;
+                self.print_level(ui)?;
+                ui.stdout.flush()?
+            }
         }
         Ok(())
     }
 
-    fn input(&mut self, e: &Event) -> Option<UiEvent> {
+    fn input(&mut self, e: &Event, ui: &mut UiContext) -> Option<UiEvent> {
         self.mark_refresh(true);
+        if self.mode == EditorMode::ErrorMessage {
+            // press any key to exit error mode
+            return match e {
+                Event::Key(_) => {
+                    self.switch_to_edit(ui);
+                    self.event(UiEventType::Changed)
+                }
+                _ => None
+            }
+        }
         let v = match e {
             Event::Key(KeyEvent { code: KeyCode::Up, modifiers: KeyModifiers::NONE }) => {
                 self.cursor_pos = self.cursor_pos + V2::make(0, -1);
@@ -206,6 +291,20 @@ impl UiWidget for LevelEditor {
             }
             Event::Key(KeyEvent { code: KeyCode::F(4), modifiers: KeyModifiers::NONE }) => {
                 self.wrap_pos = self.cursor_pos;
+                self.event(UiEventType::Changed)
+            }
+            Event::Key(KeyEvent { code: KeyCode::F(9), modifiers: KeyModifiers::NONE }) => {
+
+                match self.save() {
+                    Ok(_) => {
+                        self.show_err(ui, "Saved!");
+                    }
+                    Err(_) => {
+                        self.show_err(ui, "Failed to save");
+                    }
+                }
+
+
                 self.event(UiEventType::Changed)
             }
             _ => None
@@ -281,6 +380,7 @@ impl UiWidget for LevelEditor {
                     _ => None
                 }
             }
+            EditorMode::ErrorMessage => None
         };
         None
     }
