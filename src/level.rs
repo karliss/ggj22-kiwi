@@ -2,7 +2,7 @@ use std::ops::{Index, IndexMut};
 use crate::vecmath::V2;
 use serde::{Serialize, Deserialize};
 
-#[derive(Copy, Clone, Serialize, Deserialize)]
+#[derive(Copy, Clone, Serialize, Deserialize, Eq, PartialEq)]
 pub enum CellColor {
     White,
     Black,
@@ -22,7 +22,7 @@ impl Cell {
 static EMPTY_CELL: Cell = Cell {
     letter: '\0',
     background: CellColor::Black,
-    foreground: CellColor::Black,
+    foreground: CellColor::White,
 };
 
 impl Cell {

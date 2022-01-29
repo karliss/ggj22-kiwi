@@ -29,7 +29,8 @@ pub struct LevelEditor
     wrap_pos: V2,
     need_refresh: bool,
     mode: EditorMode,
-    path: Option<Box<std::path::Path>>
+    path: Option<Box<std::path::Path>>,
+    paintMode: PaintMode,
 }
 
 fn buffer_size() -> (u16, u16)
@@ -52,6 +53,14 @@ enum EditorMode {
     View,
     WriteText,
     ErrorMessage,
+    Paint,
+}
+
+#[derive(Debug, PartialEq, Eq, Copy, Clone)]
+enum PaintMode {
+    BlackBackgroundNormal,
+    WhiteBackgroundNormal,
+    Invert,
 }
 
 impl LevelEditor {
@@ -65,25 +74,17 @@ impl LevelEditor {
             need_refresh: true,
             mode: EditorMode::View,
             path: None,
+            paintMode: PaintMode::WhiteBackgroundNormal,
         };
         result.fill_level();
         result
     }
 
     pub fn new_from_path(ui: &mut UiContext, path: &Path) -> std::io::Result<LevelEditor> {
-        let mut result = LevelEditor {
-            id: ui.next_id(),
-            level: Level::new(50, 50),
-            cursor_pos: V2::new(),
-            view_corner: V2::new(),
-            wrap_pos: V2::new(),
-            need_refresh: true,
-            mode: EditorMode::View,
-            path: Some(path.into()),
-        };
+        let mut result = LevelEditor::new(ui);
         if path.is_file() {
             let file = std::fs::File::open(path)?;
-            let yaml : serde_yaml::Result<Level> = serde_yaml::from_reader(file);
+            let yaml: serde_yaml::Result<Level> = serde_yaml::from_reader(file);
             match yaml {
                 Ok(res) => {
                     result.level = res
@@ -124,13 +125,8 @@ impl LevelEditor {
             for x in 0..self.level.width {
                 let pos = V2::make(x, y);
                 let mut cell = Cell::make_empty();
-                if x % 20 == 1 {
-                    cell.background = CellColor::White;
-                    cell.foreground = CellColor::Black;
-                } else {
-                    cell.background = CellColor::Black;
-                    cell.foreground = CellColor::White;
-                }
+                cell.background = CellColor::Black;
+                cell.foreground = CellColor::White;
                 self.level.set(pos, cell);
             }
         }
@@ -149,7 +145,17 @@ impl LevelEditor {
         let size = ui.buffer_size();
         queue!(ui.stdout, cursor::MoveTo(0, size.1 - 1),
                 style::ResetColor)?;
-        queue!(ui.stdout, style::Print(format!("mode: {:?}", self.mode)))?;
+        queue!(ui.stdout, style::Print(format!("mode: {:?} ", self.mode)))?;
+        match self.mode {
+            EditorMode::View => {
+                queue!(ui.stdout, style::Print(format!(" F2 -> edit mode, F3 -> text mode, F4 -> set corner, F5 -> paint mode, F9 -> save " )))?;
+            }
+            EditorMode::Paint => {
+                queue!(ui.stdout, style::Print(format!(" color: {:?} ", self.paintMode)))?;
+                queue!(ui.stdout, style::Print(format!(" [ZXC]->colors, [SPACE]->paint here, [WASD] paint in direction")))?;
+            }
+            _ => {}
+        }
         queue!(ui.stdout, Clear(ClearType::UntilNewLine))?;
         Ok(())
     }
@@ -232,6 +238,35 @@ impl LevelEditor {
         enable_raw_mode()?;
         execute!(ui.stdout, crossterm::terminal::EnterAlternateScreen)
     }
+
+    fn paint_cell_here(&mut self, pos: V2) {
+        let mut cell = self.level[pos];
+        match self.paintMode {
+            PaintMode::BlackBackgroundNormal => {
+                cell.background = CellColor::Black;
+                cell.foreground = CellColor::White;
+            }
+            PaintMode::WhiteBackgroundNormal => {
+                cell.background = CellColor::White;
+                cell.foreground = CellColor::Black;
+            }
+            PaintMode::Invert => {
+                if cell.background == CellColor::Black {
+                    cell.background =CellColor::White;
+                    cell.foreground = CellColor::Black;
+                } else if cell.background == CellColor::White {
+                    cell.background = CellColor::Black;
+                    cell.foreground = CellColor::White;
+                }
+            }
+        }
+        self.level.set(pos, cell);
+    }
+
+    fn move_and_paint(&mut self, dir: V2) {
+        self.cursor_pos = self.cursor_pos + dir;
+        self.paint_cell_here(self.cursor_pos);
+    }
 }
 
 impl UiWidget for LevelEditor {
@@ -256,7 +291,7 @@ impl UiWidget for LevelEditor {
                     self.event(UiEventType::Changed)
                 }
                 _ => None
-            }
+            };
         }
         let v = match e {
             Event::Key(KeyEvent { code: KeyCode::Up, modifiers: KeyModifiers::NONE }) => {
@@ -293,8 +328,11 @@ impl UiWidget for LevelEditor {
                 self.wrap_pos = self.cursor_pos;
                 self.event(UiEventType::Changed)
             }
+            Event::Key(KeyEvent { code: KeyCode::F(5), modifiers: KeyModifiers::NONE }) => {
+                self.mode = EditorMode::Paint;
+                self.event(UiEventType::Changed)
+            }
             Event::Key(KeyEvent { code: KeyCode::F(9), modifiers: KeyModifiers::NONE }) => {
-
                 match self.save() {
                     Ok(_) => {
                         self.show_err(ui, "Saved!");
@@ -311,7 +349,7 @@ impl UiWidget for LevelEditor {
         };
         if v.is_some() { return v; }
 
-        if self.mode != EditorMode::WriteText {
+        if self.mode != EditorMode::WriteText && self.mode != EditorMode::Paint {
             let v = match e {
                 Event::Key(KeyEvent { code: KeyCode::Char('w'), modifiers: KeyModifiers::NONE }) => {
                     self.view_corner = self.view_corner + V2::make(0, -1);
@@ -342,6 +380,7 @@ impl UiWidget for LevelEditor {
             }
         }
 
+
         let v = match self.mode {
             EditorMode::View => {
                 match e {
@@ -362,7 +401,7 @@ impl UiWidget for LevelEditor {
                         self.event(UiEventType::Changed)
                     }
                     Event::Key(KeyEvent { code: KeyCode::Backspace, modifiers: KeyModifiers::NONE }) |
-                    Event::Key(KeyEvent { code: KeyCode::Char('h'), modifiers: KeyModifiers::CONTROL })=> {
+                    Event::Key(KeyEvent { code: KeyCode::Char('h'), modifiers: KeyModifiers::CONTROL }) => {
                         self.cursor_pos.x -= 1;
                         let mut data = self.level[self.cursor_pos];
                         data.letter = '\0';
@@ -375,6 +414,50 @@ impl UiWidget for LevelEditor {
                         data.letter = *c;
                         self.level.set(self.cursor_pos, data);
                         self.cursor_pos.x += 1;
+                        self.event(UiEventType::Changed)
+                    }
+                    _ => None
+                }
+            }
+            EditorMode::Paint => {
+                match e {
+                    Event::Key(KeyEvent { code: KeyCode::Esc, modifiers: KeyModifiers::NONE }) => {
+                        self.mode = EditorMode::View;
+                        self.event(UiEventType::Changed)
+                    }
+
+                    Event::Key(KeyEvent { code: KeyCode::Char('w'), modifiers: KeyModifiers::NONE }) => {
+                        self.move_and_paint(V2::make(0, -1));
+                        self.event(UiEventType::Changed)
+                    }
+                    Event::Key(KeyEvent { code: KeyCode::Char('s'), modifiers: KeyModifiers::NONE }) => {
+                        self.move_and_paint(V2::make(0, 1));
+                        self.event(UiEventType::Changed)
+                    }
+                    Event::Key(KeyEvent { code: KeyCode::Char('a'), modifiers: KeyModifiers::NONE }) => {
+                        self.move_and_paint(V2::make(-1, 0));
+                        self.event(UiEventType::Changed)
+                    }
+                    Event::Key(KeyEvent { code: KeyCode::Char('d'), modifiers: KeyModifiers::NONE }) => {
+                        self.move_and_paint(V2::make(1, 0));
+                        self.event(UiEventType::Changed)
+                    }
+
+                    Event::Key(KeyEvent { code: KeyCode::Char('z'), modifiers: KeyModifiers::NONE }) => {
+                        self.paintMode = PaintMode::BlackBackgroundNormal;
+                        self.event(UiEventType::Changed)
+                    }
+                    Event::Key(KeyEvent { code: KeyCode::Char('x'), modifiers: KeyModifiers::NONE }) => {
+                        self.paintMode = PaintMode::WhiteBackgroundNormal;
+                        self.event(UiEventType::Changed)
+                    }
+                    Event::Key(KeyEvent { code: KeyCode::Char('c'), modifiers: KeyModifiers::NONE }) => {
+                        self.paintMode = PaintMode::Invert;
+                        self.event(UiEventType::Changed)
+                    }
+
+                    Event::Key(KeyEvent { code: KeyCode::Char(' '), modifiers: KeyModifiers::NONE }) => {
+                        self.paint_cell_here(self.cursor_pos);
                         self.event(UiEventType::Changed)
                     }
                     _ => None
