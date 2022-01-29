@@ -14,9 +14,19 @@ impl V2 {
     pub fn new() -> V2 {
         V2 { x: 0, y: 0 }
     }
-    pub fn make(x: i32, y: i32) -> V2 {
-        V2 { x, y }
+
+    pub fn from(size: (u16, u16)) -> V2 {
+        V2 {
+            x: size.0 as i32,
+            y: size.1 as i32
+        }
     }
+
+pub fn make(x: i32, y: i32) -> V2 {
+    V2 { x, y }
+}
+
+
 }
 
 impl Add for V2 {
@@ -87,6 +97,11 @@ impl Rectangle {
     pub fn height(&self) -> i32 {
         self.size.y
     }
+
+    pub fn contains(&self, pos: V2) -> bool {
+        pos.x >= self.left() && pos.x <= self.right() &&
+            pos.y >= self.top() && pos.y <= self.bottom()
+    }
 }
 
 #[cfg(test)]
@@ -115,5 +130,19 @@ mod tests {
         assert_eq!(r.bottom_right(), V2::make(3, 5));
         assert_eq!(r.bottom_left(), V2::make(1, 5));
         assert_eq!(r.top_right(), V2::make(3, 2));
+    }
+
+
+    #[test]
+    fn inside() {
+        let r = Rectangle {
+            pos: V2::make(1, 2),
+            size: V2::make(3, 4),
+        };
+        assert_eq!(true, r.contains(V2::make(1, 2)));
+        assert_eq!(false, r.contains(V2::make(0, 2)));
+        assert_eq!(true, r.contains(r.bottom_right()));
+        assert_eq!(false, r.contains(r.bottom_right() + V2::make(1, 0)));
+        assert_eq!(false, r.contains(r.bottom_right() + V2::make(0, 1)));
     }
 }
