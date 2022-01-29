@@ -15,7 +15,7 @@ pub struct Cell {
 }
 
 impl Cell {
-    pub fn empty(&self) -> bool { self.letter == '\0' }
+    pub fn empty(&self) -> bool { self.letter == '\0' || self.letter == ' ' }
 }
 
 static EMPTY_CELL: Cell = Cell {

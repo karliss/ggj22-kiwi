@@ -72,7 +72,7 @@ impl LevelEditor {
             for x in 0..self.level.width {
                 let pos = V2::make(x, y);
                 let mut cell = Cell::make_empty();
-                if x % 2 == 1 {
+                if x % 20 == 1 {
                     cell.background = CellColor::White;
                     cell.foreGround = CellColor::Black;
                 } else {
@@ -111,18 +111,18 @@ impl LevelEditor {
             for x in 0..size.0 {
                 let mut pos = V2::make(x as i32, y as i32);
                 pos = pos + self.view_corner;
-                let cellData = self.level[pos];
+                let cell = self.level[pos];
                 if reposition {
                     queue!(ui.stdout, cursor::MoveTo(x, y));
                     reposition = false;
                 }
-                let mut c = cellData.letter;
-                if cellData.empty() {
+                let mut c = cell.letter;
+                if cell.empty() {
                     c = ' '
                 }
                 queue!(ui.stdout, style::PrintStyledContent(style::style(c)
-                        .with(get_color(cellData.foreGround))
-                        .on(get_color(cellData.background))))?;
+                        .with(get_color(cell.foreGround))
+                        .on(get_color(cell.background))))?;
             }
         }
         self.print_status_bar(ui)?;
@@ -230,6 +230,12 @@ impl UiWidget for LevelEditor {
                     self.view_corner = self.view_corner + V2::make(1, 0);
                     self.event(UiEventType::Changed)
                 }
+
+                Event::Key(KeyEvent { code: KeyCode::Char('e'), modifiers: KeyModifiers::NONE }) => {
+                    self.mode = EditorMode::WriteText;
+                    self.wrap_pos = self.cursor_pos;
+                    self.event(UiEventType::Changed)
+                }
                 _ => None
             };
             if v.is_some() {
@@ -237,28 +243,44 @@ impl UiWidget for LevelEditor {
             }
         }
 
-        if self.mode == EditorMode::WriteText {
-            let v = match e {
-                Event::Key(KeyEvent { code: KeyCode::Enter, modifiers: KeyModifiers::NONE }) => {
-                    self.cursor_pos.x = self.wrap_pos.x;
-                    self.cursor_pos.y += 1;
-                    self.event(UiEventType::Changed)
+        let v = match self.mode {
+            EditorMode::View => {
+                match e {
+                    _ => None
                 }
-                Event::Key(KeyEvent { code: KeyCode::Esc, modifiers: KeyModifiers::NONE }) => {
-                    self.mode = EditorMode::View;
-                    self.event(UiEventType::Changed)
+            }
+            EditorMode::WriteText => {
+                match e {
+                    Event::Key(KeyEvent {
+                                   code: KeyCode::Enter, modifiers: KeyModifiers::NONE
+                               }) => {
+                        self.cursor_pos.x = self.wrap_pos.x;
+                        self.cursor_pos.y += 1;
+                        self.event(UiEventType::Changed)
+                    }
+                    Event::Key(KeyEvent { code: KeyCode::Esc, modifiers: KeyModifiers::NONE }) => {
+                        self.mode = EditorMode::View;
+                        self.event(UiEventType::Changed)
+                    }
+                    Event::Key(KeyEvent { code: KeyCode::Backspace, modifiers: KeyModifiers::NONE }) => {
+                        self.cursor_pos.x -= 1;
+                        let mut data = self.level[self.cursor_pos];
+                        data.letter = '\0';
+                        self.level.set(self.cursor_pos, data);
+                        self.event(UiEventType::Changed)
+                    }
+                    Event::Key(KeyEvent { code: KeyCode::Char(c), modifiers: m }) if
+                    !c.is_control() && (m == &KeyModifiers::NONE || m == &KeyModifiers::SHIFT) => {
+                        let mut data = self.level[self.cursor_pos];
+                        data.letter = *c;
+                        self.level.set(self.cursor_pos, data);
+                        self.cursor_pos.x += 1;
+                        self.event(UiEventType::Changed)
+                    }
+                    _ => None
                 }
-                Event::Key(KeyEvent { code: KeyCode::Char(c), modifiers: KeyModifiers::NONE }) if !c.is_control() => {
-                    let mut data = self.level[self.cursor_pos];
-                    data.letter = *c;
-                    self.level.set(self.cursor_pos, data);
-                    self.cursor_pos.x += 1;
-                    self.event(UiEventType::Changed)
-                }
-                _ => None
-            };
-        }
-
+            }
+        };
         None
     }
 
