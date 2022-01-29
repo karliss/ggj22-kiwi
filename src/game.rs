@@ -777,6 +777,31 @@ impl LevelRunner {
                 self.pos = target;
                 return;
             }
+            if is_base_color(target_cell.foreground) {
+                // maybe push
+                if next_cell.background == target_cell.background && next_cell.empty() {
+                    // basic push
+                    let mut next2 = next_cell;
+                    let mut target2 = target_cell;
+                    next2.letter = target2.letter;
+                    target2.letter = ' ';
+                    self.level.set(target, target2);
+                    self.level.set(target + dir, next2);
+                    self.pos = target;
+                    return;
+                }
+                if next_cell.background != target_cell.background && next_cell.letter == target_cell.letter {
+                    // basic push
+                    let mut next2 = next_cell;
+                    let mut target2 = target_cell;
+                    next2.letter =  ' ';
+                    target2.letter = ' ';
+                    self.level.set(target, target2);
+                    self.level.set(target + dir, next2);
+                    self.pos = target;
+                    return;
+                }
+            }
         } else {
             if is_base_color(here.background) && is_base_color(target_cell.background) && target_cell.letter == '@' {
                 let mut target2 = target_cell;
@@ -786,6 +811,7 @@ impl LevelRunner {
                 self.level.set(self.pos, here2);
                 self.level.set(target, target2);
                 self.pos = target;
+                return;
             }
         }
 
