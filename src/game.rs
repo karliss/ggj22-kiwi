@@ -16,7 +16,7 @@ use level::Level;
 use ui::UiWidget;
 
 use crate::{level, ui, vecmath};
-use crate::level::{Cell, CellColor};
+use crate::level::{Cell, CellColor, Trigger};
 use crate::ui::{UiContext, UiEvent, UiEventType, UiId};
 use crate::vecmath::{Rectangle, V2};
 
@@ -54,6 +54,7 @@ enum EditorMode {
     WriteText,
     ErrorMessage,
     Paint,
+    SetMarkers,
 }
 
 #[derive(Debug, PartialEq, Eq, Copy, Clone)]
@@ -82,6 +83,7 @@ impl LevelEditor {
 
     pub fn new_from_path(ui: &mut UiContext, path: &Path) -> std::io::Result<LevelEditor> {
         let mut result = LevelEditor::new(ui);
+        result.path = Some(path.into());
         if path.is_file() {
             let file = std::fs::File::open(path)?;
             let yaml: serde_yaml::Result<Level> = serde_yaml::from_reader(file);
@@ -114,7 +116,7 @@ impl LevelEditor {
             }
             None => {
                 eprintln!("Can't save, no path specified");
-                Ok(())
+                Err(Error::from(ErrorKind::Other))
             }
         }
     }
@@ -148,15 +150,62 @@ impl LevelEditor {
         queue!(ui.stdout, style::Print(format!("mode: {:?} ", self.mode)))?;
         match self.mode {
             EditorMode::View => {
-                queue!(ui.stdout, style::Print(format!(" F2 -> edit mode, F3 -> text mode, F4 -> set corner, F5 -> paint mode, F9 -> save " )))?;
+                queue!(ui.stdout, style::Print(format!(" F2: view F3: text mode F4: corner F5: paint F6: markers F9: save " )))?;
             }
             EditorMode::Paint => {
                 queue!(ui.stdout, style::Print(format!(" color: {:?} ", self.paintMode)))?;
                 queue!(ui.stdout, style::Print(format!(" [ZXC]->colors, [SPACE]->paint here, [WASD] paint in direction")))?;
             }
+            EditorMode::SetMarkers => {
+                for trigger in &self.level.triggers {
+                    if trigger.pos == self.cursor_pos {
+                        queue!(ui.stdout, style::Print(format!(" here: {}", trigger.id)))?;
+                    }
+                }
+                queue!(ui.stdout, style::Print(format!(" [z]->level start [xc]->exits")))?;
+            }
             _ => {}
         }
         queue!(ui.stdout, Clear(ClearType::UntilNewLine))?;
+        Ok(())
+    }
+
+    fn print_rect(&mut self, ui: &mut UiContext, rect: Rectangle, c: char) {
+        let mut visible_rect = self.get_view_rect();
+        for y in rect.top()..=rect.bottom() {
+            for x in rect.left()..=rect.right() {
+                let p = V2::make(x, y);
+                if visible_rect.contains(p) {
+                    let p2 = p - self.view_corner;
+
+                    ui.goto(p2);
+                    queue!(ui.stdout, style::PrintStyledContent(style::style(' ')
+                        .with(Color::Black)
+                        .on(Color::DarkRed)));
+                }
+            }
+        }
+    }
+
+    fn print_at(&self, ui: &mut UiContext, ps: V2, c: char, tColor: Option<Color>, bColor: Option<Color>) -> std::io::Result<()> {
+        let visible_rect = self.get_view_rect();
+        if !visible_rect.contains(ps) {
+            return Ok(())
+        }
+
+        ui.goto(ps - self.view_corner);
+        let mut message = style::style(c);
+
+        let cell = self.level[ps];
+        if let Some(color) = tColor {
+            message = message.with(color);
+        }
+        if let Some(color) = bColor {
+            message = message.on(color);
+        } else {
+            message = message.on(get_color(cell.background));
+        }
+        queue!(ui.stdout, style::PrintStyledContent(message))?;
         Ok(())
     }
 
@@ -183,6 +232,16 @@ impl LevelEditor {
                         .on(get_color(cell.background))))?;
             }
         }
+        self.print_rect(ui, Rectangle { pos: V2::make(-1, -1), size: V2::make(self.level.width + 2, 1) }, ' ');
+        self.print_rect(ui, Rectangle { pos: V2::make(-1, self.level.height), size: V2::make(self.level.width + 2, 1) }, ' ');
+        self.print_rect(ui, Rectangle { pos: V2::make(-1, -1), size: V2::make(1, self.level.height + 2) }, ' ');
+        self.print_rect(ui, Rectangle { pos: V2::make(self.level.width, -1), size: V2::make(1, self.level.height + 2) }, ' ');
+
+        self.print_at(ui, self.level.p0, '$', Some(Color::DarkGreen), None);
+        for trigger in &self.level.triggers {
+            self.print_at(ui, trigger.pos, '?', Some(Color::Blue), None);
+        }
+
         self.print_status_bar(ui)?;
 
         if visible_rect.contains(self.cursor_pos) {
@@ -252,7 +311,7 @@ impl LevelEditor {
             }
             PaintMode::Invert => {
                 if cell.background == CellColor::Black {
-                    cell.background =CellColor::White;
+                    cell.background = CellColor::White;
                     cell.foreground = CellColor::Black;
                 } else if cell.background == CellColor::White {
                     cell.background = CellColor::Black;
@@ -332,7 +391,12 @@ impl UiWidget for LevelEditor {
                 self.mode = EditorMode::Paint;
                 self.event(UiEventType::Changed)
             }
+            Event::Key(KeyEvent { code: KeyCode::F(6), modifiers: KeyModifiers::NONE }) => {
+                self.mode = EditorMode::SetMarkers;
+                self.event(UiEventType::Changed)
+            }
             Event::Key(KeyEvent { code: KeyCode::F(9), modifiers: KeyModifiers::NONE }) => {
+                self.switch_to_err(ui);
                 match self.save() {
                     Ok(_) => {
                         self.show_err(ui, "Saved!");
@@ -367,12 +431,6 @@ impl UiWidget for LevelEditor {
                     self.view_corner = self.view_corner + V2::make(1, 0);
                     self.event(UiEventType::Changed)
                 }
-
-                Event::Key(KeyEvent { code: KeyCode::Char('e'), modifiers: KeyModifiers::NONE }) => {
-                    self.mode = EditorMode::WriteText;
-                    self.wrap_pos = self.cursor_pos;
-                    self.event(UiEventType::Changed)
-                }
                 _ => None
             };
             if v.is_some() {
@@ -384,6 +442,11 @@ impl UiWidget for LevelEditor {
         let v = match self.mode {
             EditorMode::View => {
                 match e {
+                    Event::Key(KeyEvent { code: KeyCode::Char('e'), modifiers: KeyModifiers::NONE }) => {
+                        self.mode = EditorMode::WriteText;
+                        self.wrap_pos = self.cursor_pos;
+                        self.event(UiEventType::Changed)
+                    }
                     _ => None
                 }
             }
@@ -463,6 +526,43 @@ impl UiWidget for LevelEditor {
                     _ => None
                 }
             }
+            EditorMode::SetMarkers => {
+                match e {
+                    Event::Key(KeyEvent { code: KeyCode::Esc, modifiers: KeyModifiers::NONE }) => {
+                        self.mode = EditorMode::View;
+                        self.event(UiEventType::Changed)
+                    }
+
+                    Event::Key(KeyEvent { code: KeyCode::Char('z'), modifiers: KeyModifiers::NONE }) => {
+                        self.level.p0 = self.cursor_pos;
+                        self.event(UiEventType::Changed)
+                    }
+
+                    Event::Key(KeyEvent { code: KeyCode::Backspace, modifiers: KeyModifiers::NONE }) |
+                    Event::Key(KeyEvent { code: KeyCode::Char('h'), modifiers: KeyModifiers::CONTROL }) => {
+                        self.level.triggers.retain(|trigger| trigger.pos != self.cursor_pos);
+                        self.event(UiEventType::Changed)
+                    }
+
+                    Event::Key(KeyEvent { code: KeyCode::Char('x'), modifiers: KeyModifiers::NONE }) => {
+                        self.level.triggers.retain(|trigger| trigger.pos != self.cursor_pos);
+                        self.level.triggers.push(Trigger {
+                            pos: self.cursor_pos,
+                            id: "exit1".into(),
+                        });
+                        self.event(UiEventType::Changed)
+                    }
+                    Event::Key(KeyEvent { code: KeyCode::Char('c'), modifiers: KeyModifiers::NONE }) => {
+                        self.level.triggers.retain(|trigger| trigger.pos != self.cursor_pos);
+                        self.level.triggers.push(Trigger {
+                            pos: self.cursor_pos,
+                            id: "exit2".into(),
+                        });
+                        self.event(UiEventType::Changed)
+                    }
+                    _ => None
+                }
+            }
             EditorMode::ErrorMessage => None
         };
         None
@@ -490,5 +590,172 @@ impl UiWidget for LevelEditor {
 
     fn get_id(&self) -> UiId {
         return self.id;
+    }
+}
+
+pub struct LevelRunner {
+    pub level: Level,
+    pub pos: V2,
+    view_corner: V2,
+    pub need_refresh: bool,
+    id: UiId,
+}
+
+impl LevelRunner {
+    pub fn new(ui: &mut UiContext) -> LevelRunner {
+        LevelRunner {
+            id: ui.next_id(),
+            level: Level::new(10, 10),
+            pos: V2::make(2, 2),
+            view_corner: V2::make(0, 0),
+            need_refresh: true,
+        }
+    }
+    pub fn new_with_level(ui: &mut UiContext, level: &Level) -> LevelRunner {
+        let mut res = LevelRunner::new(ui);
+        res.level = level.clone();
+        res.pos = level.p0;
+
+        res
+    }
+
+
+    fn get_view_rect(&self) -> Rectangle {
+        let size = buffer_size();
+        vecmath::Rectangle {
+            pos: self.view_corner,
+            size: V2::from(size),
+        }
+    }
+
+    fn print_level(&mut self, ui: &mut UiContext) -> std::io::Result<()> {
+        let size = ui.buffer_size();
+        let mut visible_rect = self.get_view_rect();
+        queue!(ui.stdout, cursor::Hide)?;
+        for y in 0..size.1 {
+            let mut reposition = true;
+            for x in 0..size.0 {
+                let mut pos = V2::make(x as i32, y as i32);
+
+                pos = pos + self.view_corner;
+                let cell = self.level[pos];
+                if reposition {
+                    queue!(ui.stdout, cursor::MoveTo(x, y))?;
+                    reposition = false;
+                }
+                let mut c = cell.letter;
+                if cell.empty() {
+                    c = ' '
+                }
+                queue!(ui.stdout, style::PrintStyledContent(style::style(c)
+                        .with(get_color(cell.foreground))
+                        .on(get_color(cell.background))))?;
+            }
+        }
+        if visible_rect.contains(self.pos) {
+            ui.goto(self.pos - self.view_corner);
+            let cell = self.level[self.pos];
+            queue!(ui.stdout, style::PrintStyledContent(style::style('@')
+                        .with(get_color(cell.foreground))
+                        .on(get_color(cell.background))))?;
+        }
+        /*self.print_rect(ui, Rectangle { pos: V2::make(-1, -1), size: V2::make(self.level.width + 2, 1) }, ' ');
+        self.print_rect(ui, Rectangle { pos: V2::make(-1, self.level.height), size: V2::make(self.level.width + 2, 1) }, ' ');
+        self.print_rect(ui, Rectangle { pos: V2::make(-1, -1), size: V2::make(1, self.level.height + 2) }, ' ');
+        self.print_rect(ui, Rectangle { pos: V2::make(self.level.width, -1), size: V2::make(1, self.level.height + 2) }, ' ');*/
+        Ok(())
+    }
+
+    fn keep_cursor_in_view(&mut self) -> bool {
+        let PADDING = 5;
+        let mut view = self.get_view_rect();
+        view = view.grow(-PADDING);
+        if view.contains(self.pos) {
+            return false;
+        }
+        let size = V2::from(buffer_size());
+        let pos = self.pos;
+        let mut moved = false;
+        if pos.x < view.left() {
+            self.view_corner.x = pos.x - PADDING;
+            moved = true;
+        }
+        if pos.x > view.right() {
+            self.view_corner.x = pos.x + PADDING - size.x;
+            moved = true;
+        }
+        if pos.y < view.top() {
+            self.view_corner.y = pos.y - PADDING;
+            moved = true;
+        }
+        if pos.y > view.bottom() {
+            self.view_corner.y = pos.y + PADDING - size.y;
+            moved = true;
+        }
+        return moved;
+    }
+
+    fn walk(&mut self, dir: V2) {
+        let target = self.pos + dir;
+        let bounds = self.level.bounds();
+        if !bounds.contains(target) {
+            return;
+        }
+
+        self.pos = target;
+    }
+
+    fn move_with_ui(&mut self, dir: V2, ui: &mut UiContext)  {
+        self.walk(dir);
+        self.keep_cursor_in_view();
+        self.mark_refresh(true);
+    }
+
+}
+
+impl UiWidget for LevelRunner {
+    fn print(&mut self, ui: &mut UiContext) -> std::io::Result<()> {
+        if self.need_refresh {
+            self.print_level(ui)?;
+        }
+        Ok(())
+    }
+
+    fn input(&mut self, e: &Event, ui: &mut UiContext) -> Option<UiEvent> {
+        match e {
+            Event::Key(KeyEvent { code: KeyCode::Up, modifiers: KeyModifiers::NONE }) => {
+                self.move_with_ui(V2::make(0, -1), ui);
+                self.event(UiEventType::Changed)
+            }
+            _ => None
+        }
+    }
+
+    fn child_widgets(&self) -> Vec<&dyn UiWidget> {
+        vec![]
+    }
+
+    fn child_widgets_mut(&mut self) -> Vec<&mut dyn UiWidget> {
+        vec![]
+    }
+
+    fn mark_refresh(&mut self, value: bool) {
+        self.need_refresh = value;
+    }
+
+    fn need_refresh(&self) -> bool {
+        self.need_refresh
+    }
+
+    fn get_id(&self) -> UiId {
+        return self.id
+    }
+
+    fn update(&mut self) -> Option<UiEvent> {
+        if self.keep_cursor_in_view() {
+            self.mark_refresh(true);
+            return self.event(UiEventType::Changed);
+        }
+        None
     }
 }

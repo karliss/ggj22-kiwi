@@ -1,9 +1,8 @@
 use std::ops::{Add, Sub};
 
-#[cfg(feature = "serde_derive")]
-use serde_derive::{Serialize, Deserialize};
+use serde::{Serialize, Deserialize};
 
-#[cfg_attr(feature = "serde_derive", derive(Serialize, Deserialize))]
+#[derive(Serialize, Deserialize)]
 #[derive(Debug, PartialEq, Eq, Copy, Clone)]
 pub struct V2 {
     pub x: i32,
@@ -49,7 +48,7 @@ impl Sub for V2 {
     }
 }
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 pub struct Rectangle {
     pub pos: V2,
     pub size: V2,

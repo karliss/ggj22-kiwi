@@ -1,9 +1,11 @@
 use std::any::Any;
+use std::char::decode_utf16;
 use std::io::Stdout;
 use std::io::Write;
 use std::num::NonZeroU64;
 use std::thread;
 use std::time::Duration;
+use clap::ErrorKind;
 
 use crossterm::{
     cursor::{self, position},
@@ -209,6 +211,9 @@ impl<'a> UiContext<'a> {
 
     pub fn goto(&mut self, p: V2) -> std::io::Result<()> {
         //TODO: sanity check
+        if p.x < 0 || p.y < 0 || p.x >= u16::MAX as i32 || p.y >= u16::MAX as i32 {
+            return Err(std::io::ErrorKind::Other.into());
+        }
         queue!(self.stdout, cursor::MoveTo((p.x) as u16, (p.y) as u16))
     }
 

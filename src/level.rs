@@ -1,5 +1,5 @@
 use std::ops::{Index, IndexMut};
-use crate::vecmath::V2;
+use crate::vecmath::{Rectangle, V2};
 use serde::{Serialize, Deserialize};
 
 #[derive(Copy, Clone, Serialize, Deserialize, Eq, PartialEq)]
@@ -36,11 +36,20 @@ impl Cell {
     }
 }
 
-#[derive(Serialize, Deserialize)]
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct Trigger {
+    pub pos: V2,
+    pub id: String,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
 pub struct Level {
-    pub data: Vec<Vec<Cell>>,
     pub width: i32,
     pub height: i32,
+    pub p0: V2,
+    pub triggers: Vec<Trigger>,
+    pub data: Vec<Vec<Cell>>,
 }
 
 impl Level {
@@ -49,6 +58,8 @@ impl Level {
             data: vec![vec![Cell::make_empty(); width as usize]; height as usize],
             width,
             height,
+            p0: V2::make(2, 2),
+            triggers: vec![],
         };
     }
 
@@ -64,6 +75,10 @@ impl Level {
         if self.contains(pos) {
             self.data[pos.y as usize][pos.x as usize] = value;
         }
+    }
+
+    pub fn bounds(&self) -> Rectangle {
+        Rectangle{pos: V2::make(0, 0), size: self.size()}
     }
 }
 
