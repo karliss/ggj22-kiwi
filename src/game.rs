@@ -1,7 +1,7 @@
 use std::io::{Error, ErrorKind, Write};
 use std::default::{self, Default};
 use std::fs::File;
-use std::path::Path;
+use std::path::{is_separator, Path};
 use crossterm::{
     cursor::{self, position},
     event::{DisableMouseCapture, EnableMouseCapture, Event, KeyCode, poll, read, KeyEvent, KeyModifiers},
@@ -148,12 +148,12 @@ impl LevelEditor {
 
     fn print_status_bar(&mut self, ui: &mut UiContext) -> std::io::Result<()> {
         let size = ui.buffer_size();
-        queue!(ui.stdout, cursor::MoveTo(0, size.1 - 1),
+        queue!(ui.stdout, cursor::MoveTo(0, size.1 - 2),
                 style::ResetColor)?;
         queue!(ui.stdout, style::Print(format!("mode: {:?} ", self.mode)))?;
         match self.mode {
             EditorMode::View => {
-                queue!(ui.stdout, style::Print(format!(" F2: view F3: text mode F4: corner F5: paint F6: markers F9: save " )))?;
+                queue!(ui.stdout, style::Print(format!(" F2: view F3: text mode F4: corner F5: paint F6: markers F8: test F9: save [shift]+F8 test here " )))?;
             }
             EditorMode::Paint => {
                 queue!(ui.stdout, style::Print(format!(" color: {:?} ", self.paintMode)))?;
@@ -657,6 +657,10 @@ pub struct LevelRunner {
     id: UiId,
 }
 
+fn is_base_color(c: CellColor) -> bool {
+    return c == CellColor::Black || c == CellColor::White;
+}
+
 impl LevelRunner {
     pub fn new(ui: &mut UiContext) -> LevelRunner {
         LevelRunner {
@@ -757,14 +761,36 @@ impl LevelRunner {
         return moved;
     }
 
+
+
     fn walk(&mut self, dir: V2) {
         let target = self.pos + dir;
         let bounds = self.level.bounds();
         if !bounds.contains(target) {
             return;
         }
+        let here = self.level[self.pos];
+        let target_cell = self.level[target];
+        let next_cell = self.level[target + dir];
+        if target_cell.background == here.background {
+            if target_cell.empty() {
+                self.pos = target;
+                return;
+            }
+        } else {
+            if is_base_color(here.background) && is_base_color(target_cell.background) && target_cell.letter == '@' {
+                let mut target2 = target_cell;
+                target2.letter = ' ';
+                let mut here2 = here;
+                here2.letter = '@';
+                self.level.set(self.pos, here2);
+                self.level.set(target, target2);
+                self.pos = target;
+            }
+        }
 
-        self.pos = target;
+
+
     }
 
     fn move_with_ui(&mut self, dir: V2, ui: &mut UiContext)  {
