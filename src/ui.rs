@@ -17,6 +17,7 @@ use crossterm::{
     style,
 };
 use crossterm::event::{KeyEvent, KeyModifiers};
+use crossterm::style::Attribute;
 
 use crate::vecmath::*;
 
@@ -242,7 +243,7 @@ impl<'a> UiContext<'a> {
         let mut last_size = (0u16, 0u16);
         loop {
             let mut has_input = false;
-            let mut retry = 500;
+            let mut retry = 25;
             while !has_input && retry > 0 {
                 if let Ok(true) = poll(Duration::from_millis(20)) {
                     // Process all available events in one go, to reduce the chance of situation
@@ -301,5 +302,12 @@ impl<'a> UiContext<'a> {
         let result = self.id_counter;
         self.id_counter = UiId(NonZeroU64::new(u64::from(self.id_counter.0) + 1u64).unwrap());
         result
+    }
+
+    pub fn restore_normal(&mut self) {
+        execute!(self.stdout, crossterm::terminal::LeaveAlternateScreen);
+        disable_raw_mode();
+        execute!(self.stdout, crossterm::cursor::Show, style::ResetColor, style::SetAttribute(Attribute::Reset));
+        execute!(self.stdout, cursor::MoveToNextLine(1));
     }
 }

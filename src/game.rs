@@ -1,6 +1,8 @@
-use std::io::{Error, ErrorKind, Write};
+use std::cmp::{max, min};
+use std::io::{Error, ErrorKind, stderr, Write};
 use std::default::{self, Default};
 use std::fs::File;
+use std::ops::Mul;
 use std::path::{is_separator, Path};
 use crossterm::{
     cursor::{self, position},
@@ -16,8 +18,9 @@ use level::Level;
 use ui::UiWidget;
 
 use crate::{level, ui, vecmath};
-use crate::level::{Cell, CellColor, Trigger};
+use crate::level::{Cell, CellColor, LevelList, Trigger};
 use crate::ui::{UiContext, UiEvent, UiEventType, UiId};
+use crate::ui::UiEventType::Changed;
 use crate::vecmath::{Rectangle, V2};
 
 pub struct LevelEditor
@@ -32,6 +35,7 @@ pub struct LevelEditor
     path: Option<Box<std::path::Path>>,
     paintMode: PaintMode,
     test_runer: LevelRunner,
+    show_triggers: bool
 }
 
 fn buffer_size() -> (u16, u16)
@@ -94,6 +98,7 @@ impl LevelEditor {
             path: None,
             paintMode: PaintMode::WhiteBackgroundNormal,
             test_runer: LevelRunner::new(ui),
+            show_triggers: true,
         };
         result.fill_level();
         result
@@ -172,7 +177,7 @@ impl LevelEditor {
             }
             EditorMode::Paint => {
                 queue!(ui.stdout, style::Print(format!(" color: {:?} ", self.paintMode)))?;
-                queue!(ui.stdout, style::Print(format!(" [ZXC]->colors, [SPACE]->paint here, [WASD] paint in direction")))?;
+                queue!(ui.stdout, style::Print(format!(" [ZXCVBNM]->colors, [SPACE]->paint here, [WASD] paint in direction")))?;
             }
             EditorMode::SetMarkers => {
                 for trigger in &self.level.triggers {
@@ -180,7 +185,7 @@ impl LevelEditor {
                         queue!(ui.stdout, style::Print(format!(" here: {}", trigger.id)))?;
                     }
                 }
-                queue!(ui.stdout, style::Print(format!(" [z]->level start [xc]->exits")))?;
+                queue!(ui.stdout, style::Print(format!(" [z]->level start [vxc]->exits [t]-> toggle trigger drawing")))?;
             }
             _ => {}
         }
@@ -255,10 +260,13 @@ impl LevelEditor {
         self.print_rect(ui, Rectangle { pos: V2::make(-1, -1), size: V2::make(1, self.level.height + 2) }, ' ');
         self.print_rect(ui, Rectangle { pos: V2::make(self.level.width, -1), size: V2::make(1, self.level.height + 2) }, ' ');
 
-        self.print_at(ui, self.level.p0, '$', Some(Color::DarkGreen), None);
-        for trigger in &self.level.triggers {
-            self.print_at(ui, trigger.pos, '?', Some(Color::Blue), None);
+        if self.show_triggers {
+            self.print_at(ui, self.level.p0, '$', Some(Color::DarkGreen), None);
+            for trigger in &self.level.triggers {
+                self.print_at(ui, trigger.pos, '?', Some(Color::Red), None);
+            }
         }
+
 
         self.print_status_bar(ui)?;
 
@@ -318,6 +326,7 @@ impl LevelEditor {
 
     fn start_level_test(&mut self, pos: V2) {
         self.test_runer.level = self.level.clone();
+        self.test_runer.start();
         self.test_runer.pos = pos;
         self.mode = EditorMode::Play;
     }
@@ -530,6 +539,18 @@ impl UiWidget for LevelEditor {
                 return v;
             }
         }
+        if self.mode != EditorMode::WriteText  {
+            let v = match e {
+                Event::Key(KeyEvent { code: KeyCode::Char('t'), modifiers: KeyModifiers::NONE }) => {
+                    self.show_triggers = !self.show_triggers;
+                    self.event(UiEventType::Changed)
+                }
+                _ => None
+            };
+            if v.is_some() {
+                return v;
+            }
+        }
 
 
         let v = match self.mode {
@@ -645,6 +666,14 @@ impl UiWidget for LevelEditor {
                         });
                         self.event(UiEventType::Changed)
                     }
+                    Event::Key(KeyEvent { code: KeyCode::Char('v'), modifiers: KeyModifiers::NONE }) => {
+                        self.level.triggers.retain(|trigger| trigger.pos != self.cursor_pos);
+                        self.level.triggers.push(Trigger {
+                            pos: self.cursor_pos,
+                            id: "exit0".into(),
+                        });
+                        self.event(UiEventType::Changed)
+                    }
                     _ => None
                 }
             }
@@ -655,6 +684,13 @@ impl UiWidget for LevelEditor {
         None
     }
 
+    fn update(&mut self) -> Option<UiEvent> {
+        if self.mode == EditorMode::Play {
+            let r = self.test_runer.update();
+            return self.handle_test_play(r);
+        }
+        None
+    }
     fn child_widgets(&self) -> Vec<&dyn UiWidget> {
         vec![]
     }
@@ -682,6 +718,7 @@ impl UiWidget for LevelEditor {
 
 pub struct LevelRunner {
     pub level: Level,
+    backup_level: Level,
     pub pos: V2,
     view_corner: V2,
     pub need_refresh: bool,
@@ -697,6 +734,7 @@ impl LevelRunner {
         LevelRunner {
             id: ui.next_id(),
             level: Level::new(10, 10),
+            backup_level: Level::new(10, 10),
             pos: V2::make(2, 2),
             view_corner: V2::make(0, 0),
             need_refresh: true,
@@ -705,6 +743,7 @@ impl LevelRunner {
     pub fn new_with_level(ui: &mut UiContext, level: &Level) -> LevelRunner {
         let mut res = LevelRunner::new(ui);
         res.level = level.clone();
+        res.backup_level = level.clone();
         res.pos = level.p0;
 
         res
@@ -717,6 +756,11 @@ impl LevelRunner {
             pos: self.view_corner,
             size: V2::from(size),
         }
+    }
+
+    pub fn start(&mut self) {
+        self.pos = self.level.p0;
+        self.backup_level = self.level.clone();
     }
 
     fn print_level(&mut self, ui: &mut UiContext) -> std::io::Result<()> {
@@ -809,27 +853,29 @@ impl LevelRunner {
             }
             if is_base_color(target_cell.foreground) {
                 // maybe push
-                if next_cell.background == target_cell.background && next_cell.empty() {
-                    // basic push
-                    let mut next2 = next_cell;
-                    let mut target2 = target_cell;
-                    next2.letter = target2.letter;
-                    target2.letter = ' ';
-                    self.level.set(target, target2);
-                    self.level.set(target + dir, next2);
-                    self.pos = target;
-                    return;
-                }
-                if next_cell.background != target_cell.background && next_cell.letter == target_cell.letter {
-                    // basic push
-                    let mut next2 = next_cell;
-                    let mut target2 = target_cell;
-                    next2.letter = ' ';
-                    target2.letter = ' ';
-                    self.level.set(target, target2);
-                    self.level.set(target + dir, next2);
-                    self.pos = target;
-                    return;
+                if bounds.contains(target + dir) { // Don't allow pushing out of bounds
+                    if next_cell.background == target_cell.background && next_cell.empty() {
+                        // basic push
+                        let mut next2 = next_cell;
+                        let mut target2 = target_cell;
+                        next2.letter = target2.letter;
+                        target2.letter = ' ';
+                        self.level.set(target, target2);
+                        self.level.set(target + dir, next2);
+                        self.pos = target;
+                        return;
+                    }
+                    if next_cell.background != target_cell.background && next_cell.letter == target_cell.letter {
+                        // basic push
+                        let mut next2 = next_cell;
+                        let mut target2 = target_cell;
+                        next2.letter = ' ';
+                        target2.letter = ' ';
+                        self.level.set(target, target2);
+                        self.level.set(target + dir, next2);
+                        self.pos = target;
+                        return;
+                    }
                 }
             }
             if target_cell.foreground == CellColor::LightGray {
@@ -854,6 +900,10 @@ impl LevelRunner {
         self.walk(dir);
         self.keep_cursor_in_view();
         self.mark_refresh(true);
+    }
+
+    fn get_trigger_here(&mut self, pos: V2) -> Option<&Trigger>{
+        self.level.triggers.iter().find(|x| x.pos == pos)
     }
 }
 
@@ -910,9 +960,175 @@ impl UiWidget for LevelRunner {
     }
 
     fn update(&mut self) -> Option<UiEvent> {
+        if let Some(trigger) = self.get_trigger_here(self.pos) {
+            match &trigger.id as &str {
+                "exit0" => {
+                    return self.event(UiEventType::Ok);
+                }
+                c @ ("exit1" | "exit2") => {
+                    let val = c.to_owned();
+                    return self.event(UiEventType::Result(Box::new(val)));
+                }
+                _ => {}
+            }
+        }
         if self.keep_cursor_in_view() {
             self.mark_refresh(true);
             return self.event(UiEventType::Changed);
+        }
+        None
+    }
+
+
+}
+
+pub struct MultiLevelRunner {
+    id: UiId,
+    levels: LevelList,
+    current_level: usize,
+    level_runner: LevelRunner,
+    can_exit: i32,
+    need_refresh: bool,
+    message: String,
+}
+
+impl MultiLevelRunner {
+    pub fn new(ui: &mut UiContext, levels: LevelList) -> MultiLevelRunner {
+        let mut res = MultiLevelRunner {
+            id: ui.next_id(),
+            levels,
+            current_level: 0,
+            level_runner: LevelRunner::new(ui),
+            can_exit: 0,
+            need_refresh: true,
+            message: String::new(),
+        };
+
+        res
+    }
+
+    pub fn running(&self) -> bool {
+        return self.current_level < self.levels.files.len();
+    }
+
+    fn handle_level_runner_events(&mut self, ev: &Option<UiEvent>) -> Option<UiEvent> {
+        match ev {
+            Some(UiEvent{id, e: UiEventType::Ok}) |
+            Some(UiEvent{id, e: UiEventType::Canceled}) if *id == self.level_runner.get_id() => {
+                self.current_level += 1;
+                self.start_next_level();
+                self.event(UiEventType::Changed)
+            }
+            Some(UiEvent{id, e: UiEventType::Result(res)}) if *id == self.level_runner.get_id() => {
+                self.current_level += 1;
+                self.start_next_level();
+                //TODO: good path bad path counting
+                self.event(UiEventType::Changed)
+            }
+            None => None,
+            _ => self.event(UiEventType::Changed),
+        }
+    }
+
+    fn load_level(&mut self, path: &str) -> std::io::Result<Level> {
+        let file = std::fs::File::open(path)?;
+        execute!(stderr(), cursor::MoveTo(0,0), style::ResetColor, style::Print("Loading..."));
+        let yaml: serde_yaml::Result<Level> = serde_yaml::from_reader(file);
+        match yaml {
+            Ok(res) => {
+                execute!(stderr(), style::Print(" Done"));
+                return Ok(res);
+            }
+            Err(e) => {
+                self.message = format!("Failed to load level '{}': {}", path, e);
+                eprintln!("Failed to load level '{}': {}", path, e);
+                return Err(Error::from(ErrorKind::InvalidData));
+            }
+        }
+    }
+
+    pub fn start_next_level(&mut self) {
+        if let Some(path) = self.levels.files.get(self.current_level) {
+            let path2 = path.clone();
+            if let Ok(level) = self.load_level(&path2) {
+                self.level_runner.level = level;
+                self.level_runner.start();
+            } else {
+                if self.message.is_empty() {
+                    self.message = "Failed to load level".into();
+                }
+                self.current_level = self.levels.files.len()
+            }
+        } else {
+            self.message = "Thank you for playing the game".into();
+        }
+    }
+}
+
+impl UiWidget for MultiLevelRunner {
+    fn print(&mut self, ui: &mut UiContext) -> std::io::Result<()> {
+        if self.running() {
+            self.level_runner.print(ui)?;
+        } else {
+            if !self.message.is_empty() {
+                ui.restore_normal();
+                eprintln!("{}", self.message);
+                self.can_exit = 1;
+                self.message.clear();
+            }
+        }
+        Ok(())
+    }
+
+    fn input(&mut self, e: &Event, ui: &mut UiContext) -> Option<UiEvent> {
+        if self.running() {
+            let ui_event = self.level_runner.input(e, ui);
+            self.handle_level_runner_events(&ui_event)
+        } else {
+            match e {
+                Event::Key(KeyEvent { code: _, modifiers: KeyModifiers::NONE }) => {
+                    self.can_exit = max(1, self.can_exit);
+                    self.event(UiEventType::Changed)
+                }
+                _ => None
+            }
+        }
+    }
+
+    fn child_widgets(&self) -> Vec<&dyn UiWidget> {
+        vec![]
+    }
+
+    fn child_widgets_mut(&mut self) -> Vec<&mut dyn UiWidget> {
+        vec![]
+    }
+
+    fn mark_refresh(&mut self, value: bool) {
+        self.need_refresh = value
+    }
+
+    fn need_refresh(&self) -> bool {
+        self.need_refresh || !self.message.is_empty()
+    }
+
+    fn resize(&mut self, widget_size: &Rectangle) {
+        if self.running() {
+            self.level_runner.resize(widget_size);
+        }
+    }
+
+    fn get_id(&self) -> UiId { self.id }
+
+    fn update(&mut self) -> Option<UiEvent> {
+        if self.running() {
+            let ui_ev= self.level_runner.update();
+            return self.handle_level_runner_events( &ui_ev);
+        } else {
+            if self.can_exit == 2 || self.message.is_empty() {
+                return self.event(UiEventType::Ok);
+            } else if self.can_exit == 1 {
+                self.can_exit = 2;
+            }
         }
         None
     }

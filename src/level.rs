@@ -93,3 +93,8 @@ impl Index<V2> for Level {
         &EMPTY_CELL
     }
 }
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct LevelList {
+    pub files: Vec<String>
+}

@@ -15,6 +15,8 @@ use crossterm::style::style;
 use std::thread::current;
 use clap::{App, Arg};
 use crossterm::terminal::ClearType;
+use crate::game::MultiLevelRunner;
+use crate::level::LevelList;
 
 pub mod vecmath;
 pub mod ui;
@@ -49,7 +51,23 @@ fn editor_for_file(path: &str) -> std::io::Result<()>
     res
 }
 
+fn play_levels() -> std::io::Result<()>
+{
+    let levels = LevelList{
+        files: vec!["levels/l1".into(), "levels/l2".into()]
+    };
+    let mut stdout = stdout();
+    let mut ui = ui::UiContext::create(&mut stdout).unwrap();
+    let mut runner = MultiLevelRunner::new(&mut ui, levels);
 
+    enable_raw_mode()?;
+    execute!(ui.stdout, crossterm::terminal::EnterAlternateScreen)?;
+
+    runner.start_next_level();
+    let res = ui.run(&mut runner);
+    ui.restore_normal();
+    res
+}
 
 
 
@@ -76,12 +94,7 @@ fn main() -> Result<()> {
             Ok(())
         }
         _ =>  {
-            enable_raw_mode()?;
-            execute!(stdout(), crossterm::terminal::EnterAlternateScreen)?;
-            run_empty_editor()?;
-            execute!(stdout(), crossterm::terminal::LeaveAlternateScreen)?;
-            disable_raw_mode()?;
-            Ok(())
+            play_levels()
         }
     };
     return result
