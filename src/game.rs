@@ -351,8 +351,8 @@ impl LevelEditor {
     fn switch_to_err(&mut self, ui: &mut UiContext) -> std::io::Result<()>
     {
         self.mode = EditorMode::ErrorMessage;
-        execute!(ui.stdout, crossterm::terminal::LeaveAlternateScreen)?;
-        disable_raw_mode()
+        ui.restore_normal();
+        Ok(())
     }
 
     fn show_err(&mut self, ui: &mut UiContext, text: &str) -> std::io::Result<()>
@@ -366,7 +366,7 @@ impl LevelEditor {
     fn switch_to_edit(&mut self, ui: &mut UiContext) -> std::io::Result<()> {
         self.mode = EditorMode::View;
         enable_raw_mode()?;
-        execute!(ui.stdout, crossterm::terminal::EnterAlternateScreen)
+        execute!(ui.stdout, crossterm::terminal::EnterAlternateScreen, crossterm::event::EnableMouseCapture)
     }
 
     fn start_level_test(&mut self, pos: V2) {
@@ -564,6 +564,7 @@ impl UiWidget for LevelEditor {
 
             Event::Key(KeyEvent { code: KeyCode::F(2), modifiers: KeyModifiers::NONE }) => {
                 self.mode = EditorMode::View;
+
                 self.event(UiEventType::Changed)
             }
             Event::Key(KeyEvent { code: KeyCode::F(3), modifiers: KeyModifiers::NONE }) => {
