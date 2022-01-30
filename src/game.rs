@@ -359,7 +359,7 @@ impl LevelEditor {
     {
         self.switch_to_err(ui)?;
         execute!(ui.stdout, cursor::MoveToNextLine(1))?;
-        eprintln!("{}", text);
+        eprintln!("\n\n{}\n", text);
         Ok(())
     }
 
