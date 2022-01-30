@@ -144,6 +144,19 @@ impl LevelEditor {
         }
     }
 
+    fn resize(&mut self, size: V2) {
+        if size.x < 5 || size.y < 5 {
+            return;
+        }
+        let cell = Cell::make_empty();
+        self.level.data.resize(size.y as usize, vec![cell; size.x as usize]);
+        for line in &mut self.level.data {
+            line.resize(size.x as usize, cell);
+        }
+        self.level.width = size.x;
+        self.level.height = size.y;
+    }
+
     fn fill_level(&mut self)
     {
         for y in 0..self.level.height {
@@ -559,6 +572,12 @@ impl UiWidget for LevelEditor {
                     Event::Key(KeyEvent { code: KeyCode::Char('e'), modifiers: KeyModifiers::NONE }) => {
                         self.mode = EditorMode::WriteText;
                         self.wrap_pos = self.cursor_pos;
+                        self.event(UiEventType::Changed)
+                    }
+                    Event::Key(KeyEvent { code: KeyCode::Char('R'), modifiers: KeyModifiers::NONE }) |
+                    Event::Key(KeyEvent { code: KeyCode::Char('R'), modifiers: KeyModifiers::SHIFT }) |
+                    Event::Key(KeyEvent { code: KeyCode::Char('r'), modifiers: KeyModifiers::SHIFT })=> {
+                        self.resize(self.cursor_pos);
                         self.event(UiEventType::Changed)
                     }
                     _ => None
