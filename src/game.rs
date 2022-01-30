@@ -763,6 +763,11 @@ impl LevelRunner {
         self.backup_level = self.level.clone();
     }
 
+    pub fn restart(&mut self) {
+        self.level = self.backup_level.clone();
+        self.start();
+    }
+
     fn print_level(&mut self, ui: &mut UiContext) -> std::io::Result<()> {
         let size = ui.buffer_size();
         let mut visible_rect = self.get_view_rect();
@@ -919,20 +924,28 @@ impl UiWidget for LevelRunner {
 
     fn input(&mut self, e: &Event, ui: &mut UiContext) -> Option<UiEvent> {
         match e {
+            Event::Key(KeyEvent { code: KeyCode::Char('w'), modifiers: KeyModifiers::NONE }) |
             Event::Key(KeyEvent { code: KeyCode::Up, modifiers: KeyModifiers::NONE }) => {
                 self.move_with_ui(V2::make(0, -1), ui);
                 self.event(UiEventType::Changed)
             }
+            Event::Key(KeyEvent { code: KeyCode::Char('s'), modifiers: KeyModifiers::NONE }) |
             Event::Key(KeyEvent { code: KeyCode::Down, modifiers: KeyModifiers::NONE }) => {
                 self.move_with_ui(V2::make(0, 1), ui);
                 self.event(UiEventType::Changed)
             }
+            Event::Key(KeyEvent { code: KeyCode::Char('a'), modifiers: KeyModifiers::NONE }) |
             Event::Key(KeyEvent { code: KeyCode::Left, modifiers: KeyModifiers::NONE }) => {
                 self.move_with_ui(V2::make(-1, 0), ui);
                 self.event(UiEventType::Changed)
             }
+            Event::Key(KeyEvent { code: KeyCode::Char('d'), modifiers: KeyModifiers::NONE }) |
             Event::Key(KeyEvent { code: KeyCode::Right, modifiers: KeyModifiers::NONE }) => {
                 self.move_with_ui(V2::make(1, 0), ui);
+                self.event(UiEventType::Changed)
+            }
+            Event::Key(KeyEvent { code: KeyCode::Char('r'), modifiers: KeyModifiers::NONE }) => {
+                self.restart();
                 self.event(UiEventType::Changed)
             }
             _ => None
