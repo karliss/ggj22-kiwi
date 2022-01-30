@@ -543,8 +543,8 @@ data:
       background: White
       foreground: Black
     - letter: "\u0000"
-      background: Black
-      foreground: White
+      background: White
+      foreground: Black
     - letter: "\u0000"
       background: Black
       foreground: White
@@ -552,14 +552,14 @@ data:
       background: Black
       foreground: White
     - letter: "\u0000"
-      background: Black
-      foreground: White
+      background: White
+      foreground: Black
     - letter: "\u0000"
-      background: Black
-      foreground: White
+      background: White
+      foreground: Black
     - letter: "\u0000"
-      background: Black
-      foreground: White
+      background: White
+      foreground: Black
     - letter: "\u0000"
       background: Black
       foreground: White
@@ -710,10 +710,10 @@ data:
     - letter: "\u0000"
       background: White
       foreground: Black
-    - letter: "\u0000"
+    - letter: a
       background: White
       foreground: Black
-    - letter: "\u0000"
+    - letter: a
       background: White
       foreground: Black
     - letter: "\u0000"
@@ -866,10 +866,10 @@ data:
     - letter: "\u0000"
       background: Black
       foreground: White
-    - letter: "\u0000"
+    - letter: a
       background: Black
       foreground: White
-    - letter: "\u0000"
+    - letter: a
       background: Black
       foreground: White
     - letter: "\u0000"
@@ -999,8 +999,8 @@ data:
       background: White
       foreground: Black
     - letter: "\u0000"
-      background: White
-      foreground: Black
+      background: Black
+      foreground: White
     - letter: "\u0000"
       background: Black
       foreground: White
