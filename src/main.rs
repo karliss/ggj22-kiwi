@@ -51,11 +51,34 @@ fn editor_for_file(path: &str) -> std::io::Result<()>
     res
 }
 
+fn good_level_path(path: &Path) -> bool {
+    let pb = path.join("levels");
+    return pb.exists() && pb.is_dir();
+}
+
 fn play_levels() -> std::io::Result<()>
 {
-    let levels = LevelList{
+    let mut levels = LevelList{
         files: vec!["levels/l1".into(), "levels/l2".into()]
     };
+    if let Ok(exe_path) = std::env::current_exe() {
+        let folder = exe_path.parent().unwrap();
+        let mut top_folder = folder.to_owned();
+        let folder_2 = folder.join("../../");
+        if good_level_path(folder) {
+            //top_folder = folder.to_owned();
+        } else if good_level_path(&folder_2) {
+            top_folder = folder_2;
+        } else {
+            eprintln!("Can't find level data");
+            return Err(std::io::ErrorKind::Other.into());
+        }
+
+        for path in &mut levels.files {
+            let p2 = top_folder.join(&path);
+            path.replace_range(.., p2.to_str().unwrap());
+        }
+    }
     let mut stdout = stdout();
     let mut ui = ui::UiContext::create(&mut stdout).unwrap();
     let mut runner = MultiLevelRunner::new(&mut ui, levels);
