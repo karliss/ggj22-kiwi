@@ -1,4 +1,5 @@
 use std::ops::{Add, Sub};
+use crossterm::terminal::size;
 
 use serde::{Serialize, Deserialize};
 
@@ -100,6 +101,26 @@ impl Rectangle {
     pub fn contains(&self, pos: V2) -> bool {
         pos.x >= self.left() && pos.x <= self.right() &&
             pos.y >= self.top() && pos.y <= self.bottom()
+    }
+
+    pub fn normalized(&self) -> Rectangle {
+        if self.size.x > 0 && self.size.y > 0 {
+            return *self;
+        }
+        let mut r2 = *self;
+        if r2.size.x <= 0 {
+            let l = self.right();
+            let r = self.left();
+            r2.pos.x = l;
+            r2.size.x = r - l + 1;
+        }
+        if r2.size.y <= 0 {
+            let t = r2.bottom();
+            let b = r2.top();
+            r2.pos.y = t;
+            r2.size.y = b - t + 1;
+        }
+        r2
     }
 }
 

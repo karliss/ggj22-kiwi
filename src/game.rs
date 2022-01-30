@@ -6,12 +6,14 @@ use std::ops::Mul;
 use std::path::{is_separator, Path};
 use crossterm::{
     cursor::{self, position},
-    event::{DisableMouseCapture, EnableMouseCapture, Event, KeyCode, poll, read, KeyEvent, KeyModifiers},
-    execute,
-    queue,
+    event::{DisableMouseCapture,
+            EnableMouseCapture,
+            Event, KeyCode,
+            poll, read, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind},
+    event, execute, queue,
     style::{self, Color, Attribute, Stylize},
-    terminal::{self, disable_raw_mode, enable_raw_mode},
-};
+    terminal::{self, disable_raw_mode, enable_raw_mode}};
+
 use crossterm::terminal::{Clear, ClearType};
 
 use level::Level;
@@ -35,7 +37,9 @@ pub struct LevelEditor
     path: Option<Box<std::path::Path>>,
     paintMode: PaintMode,
     test_runer: LevelRunner,
-    show_triggers: bool
+    show_triggers: bool,
+    selection_rect: Rectangle,
+    selecting_rect: bool,
 }
 
 fn buffer_size() -> (u16, u16)
@@ -99,6 +103,8 @@ impl LevelEditor {
             paintMode: PaintMode::WhiteBackgroundNormal,
             test_runer: LevelRunner::new(ui),
             show_triggers: true,
+            selection_rect: Rectangle { pos: V2::make(0, 0), size: V2::make(1, 1) },
+            selecting_rect: false,
         };
         result.fill_level();
         result
@@ -187,6 +193,7 @@ impl LevelEditor {
         match self.mode {
             EditorMode::View => {
                 queue!(ui.stdout, style::Print(format!(" F2: view F3: text mode F4: corner F5: paint F6: markers F8: test F9: save [shift]+F8 test here " )))?;
+                queue!(ui.stdout, style::Print(format!(" shift+R -> resize level, [t]->toggle triggers, [m] select rect, k: copy selection here, l: move selection, 0: fill " )))?;
             }
             EditorMode::Paint => {
                 queue!(ui.stdout, style::Print(format!(" color: {:?} ", self.paintMode)))?;
@@ -216,6 +223,27 @@ impl LevelEditor {
 
                     ui.goto(p2);
                     queue!(ui.stdout, style::PrintStyledContent(style::style(' ')
+                        .with(Color::Black)
+                        .on(Color::DarkRed)));
+                }
+            }
+        }
+    }
+
+    fn print_rect2(&mut self, ui: &mut UiContext, rect: Rectangle, c: char) {
+        let mut visible_rect = self.get_view_rect();
+        for y in rect.top()..=rect.bottom() {
+            for x in rect.left()..=rect.right() {
+                if !(x == rect.left() || x == rect.right() || y == rect.top() || y == rect.bottom()) {
+                    continue;
+                }
+                let p = V2::make(x, y);
+
+                if visible_rect.contains(p) {
+                    let p2 = p - self.view_corner;
+
+                    ui.goto(p2);
+                    queue!(ui.stdout, style::PrintStyledContent(style::style(c)
                         .with(Color::Black)
                         .on(Color::DarkRed)));
                 }
@@ -272,6 +300,10 @@ impl LevelEditor {
         self.print_rect(ui, Rectangle { pos: V2::make(-1, self.level.height), size: V2::make(self.level.width + 2, 1) }, ' ');
         self.print_rect(ui, Rectangle { pos: V2::make(-1, -1), size: V2::make(1, self.level.height + 2) }, ' ');
         self.print_rect(ui, Rectangle { pos: V2::make(self.level.width, -1), size: V2::make(1, self.level.height + 2) }, ' ');
+
+        if self.selecting_rect {
+            self.print_rect2(ui, self.selection_rect.normalized(), '#');
+        }
 
         if self.show_triggers {
             self.print_at(ui, self.level.p0, '$', Some(Color::DarkGreen), None);
@@ -399,6 +431,49 @@ impl LevelEditor {
             _ => ev
         }
     }
+
+    fn copy_rect(&mut self, rec: Rectangle, target: V2) {
+        let level_copy = self.level.clone();
+        for y in rec.top()..=rec.bottom() {
+            for x in rec.left()..=rec.right() {
+                let p1 = V2::make(x, y);
+                let c = level_copy[p1];
+                let p2 = p1 - rec.pos + target;
+                self.level.set(p2, c);
+            }
+        }
+    }
+
+    fn move_rect(&mut self, rec: Rectangle, target: V2) {
+        let level_copy = self.level.clone();
+        for y in rec.top()..=rec.bottom() {
+            for x in rec.left()..=rec.right() {
+                let p1 = V2::make(x, y);
+                self.paint_cell_here(p1);
+                let mut c = self.level[p1];
+                c.letter = ' ';
+                self.level.set(p1, c);
+            }
+        }
+        for y in rec.top()..=rec.bottom() {
+            for x in rec.left()..=rec.right() {
+                let p1 = V2::make(x, y);
+                let c = level_copy[p1];
+                let p2 = p1 - rec.pos + target;
+                self.level.set(p2, c);
+            }
+        }
+    }
+
+    fn fill_rect0(&mut self, rec: Rectangle) {
+        let c = self.level[rec.pos];
+        for y in rec.top()..=rec.bottom() {
+            for x in rec.left()..=rec.right() {
+                let p1 = V2::make(x, y);
+                self.level.set(p1, c);
+            }
+        }
+    }
 }
 
 fn letter_to_paintmode(c: char) -> PaintMode {
@@ -481,6 +556,12 @@ impl UiWidget for LevelEditor {
                 self.event(UiEventType::Changed)
             }
 
+            Event::Mouse(MouseEvent { kind: MouseEventKind::Down(event::MouseButton::Left), column, row, modifiers: KeyModifiers::NONE }) => {
+                self.cursor_pos = self.view_corner + V2::from((*column, *row));
+                self.keep_cursor_in_view();
+                self.event(UiEventType::Changed)
+            }
+
             Event::Key(KeyEvent { code: KeyCode::F(2), modifiers: KeyModifiers::NONE }) => {
                 self.mode = EditorMode::View;
                 self.event(UiEventType::Changed)
@@ -552,7 +633,7 @@ impl UiWidget for LevelEditor {
                 return v;
             }
         }
-        if self.mode != EditorMode::WriteText  {
+        if self.mode != EditorMode::WriteText {
             let v = match e {
                 Event::Key(KeyEvent { code: KeyCode::Char('t'), modifiers: KeyModifiers::NONE }) => {
                     self.show_triggers = !self.show_triggers;
@@ -576,8 +657,33 @@ impl UiWidget for LevelEditor {
                     }
                     Event::Key(KeyEvent { code: KeyCode::Char('R'), modifiers: KeyModifiers::NONE }) |
                     Event::Key(KeyEvent { code: KeyCode::Char('R'), modifiers: KeyModifiers::SHIFT }) |
-                    Event::Key(KeyEvent { code: KeyCode::Char('r'), modifiers: KeyModifiers::SHIFT })=> {
+                    Event::Key(KeyEvent { code: KeyCode::Char('r'), modifiers: KeyModifiers::SHIFT }) => {
                         self.resize(self.cursor_pos);
+                        self.event(UiEventType::Changed)
+                    }
+                    Event::Key(KeyEvent { code: KeyCode::Char('m'), modifiers: KeyModifiers::NONE }) if !self.selecting_rect => {
+                        self.selecting_rect = true;
+                        self.selection_rect.pos = self.cursor_pos;
+                        self.selection_rect.size = V2::make(1, 1);
+                        self.event(UiEventType::Changed)
+                    }
+                    Event::Key(KeyEvent { code: KeyCode::Enter, modifiers: KeyModifiers::NONE }) |
+                    Event::Key(KeyEvent { code: KeyCode::Char('m'), modifiers: KeyModifiers::NONE }) |
+                    Event::Key(KeyEvent { code: KeyCode::Esc, modifiers: KeyModifiers::NONE }) if self.selecting_rect => {
+                        self.selecting_rect = false;
+                        self.selection_rect = self.selection_rect.normalized();
+                        self.event(UiEventType::Changed)
+                    }
+                    Event::Key(KeyEvent { code: KeyCode::Char('k'), modifiers: KeyModifiers::NONE }) => {
+                        self.copy_rect(self.selection_rect.normalized(), self.cursor_pos);
+                        self.event(UiEventType::Changed)
+                    }
+                    Event::Key(KeyEvent { code: KeyCode::Char('l'), modifiers: KeyModifiers::NONE }) => {
+                        self.move_rect(self.selection_rect.normalized(), self.cursor_pos);
+                        self.event(UiEventType::Changed)
+                    }
+                    Event::Key(KeyEvent { code: KeyCode::Char('0'), modifiers: KeyModifiers::NONE }) => {
+                        self.fill_rect0(self.selection_rect.normalized());
                         self.event(UiEventType::Changed)
                     }
                     _ => None
@@ -707,6 +813,10 @@ impl UiWidget for LevelEditor {
         if self.mode == EditorMode::Play {
             let r = self.test_runer.update();
             return self.handle_test_play(r);
+        } else if self.mode == EditorMode::View {
+            if self.selecting_rect && self.selection_rect.bottom_right() != self.cursor_pos {
+                self.selection_rect.size = self.cursor_pos - self.selection_rect.pos + V2::make(1, 1);
+            }
         }
         None
     }
@@ -926,7 +1036,7 @@ impl LevelRunner {
         self.mark_refresh(true);
     }
 
-    fn get_trigger_here(&mut self, pos: V2) -> Option<&Trigger>{
+    fn get_trigger_here(&mut self, pos: V2) -> Option<&Trigger> {
         self.level.triggers.iter().find(|x| x.pos == pos)
     }
 }
@@ -1010,8 +1120,6 @@ impl UiWidget for LevelRunner {
         }
         None
     }
-
-
 }
 
 pub struct MultiLevelRunner {
@@ -1045,13 +1153,13 @@ impl MultiLevelRunner {
 
     fn handle_level_runner_events(&mut self, ev: &Option<UiEvent>) -> Option<UiEvent> {
         match ev {
-            Some(UiEvent{id, e: UiEventType::Ok}) |
-            Some(UiEvent{id, e: UiEventType::Canceled}) if *id == self.level_runner.get_id() => {
+            Some(UiEvent { id, e: UiEventType::Ok }) |
+            Some(UiEvent { id, e: UiEventType::Canceled }) if *id == self.level_runner.get_id() => {
                 self.current_level += 1;
                 self.start_next_level();
                 self.event(UiEventType::Changed)
             }
-            Some(UiEvent{id, e: UiEventType::Result(res)}) if *id == self.level_runner.get_id() => {
+            Some(UiEvent { id, e: UiEventType::Result(res) }) if *id == self.level_runner.get_id() => {
                 self.current_level += 1;
                 self.start_next_level();
                 //TODO: good path bad path counting
@@ -1153,8 +1261,8 @@ impl UiWidget for MultiLevelRunner {
 
     fn update(&mut self) -> Option<UiEvent> {
         if self.running() {
-            let ui_ev= self.level_runner.update();
-            return self.handle_level_runner_events( &ui_ev);
+            let ui_ev = self.level_runner.update();
+            return self.handle_level_runner_events(&ui_ev);
         } else {
             if self.can_exit == 2 || self.message.is_empty() {
                 return self.event(UiEventType::Ok);

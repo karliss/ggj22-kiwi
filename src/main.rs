@@ -43,11 +43,11 @@ fn editor_for_file(path: &str) -> std::io::Result<()>
     let mut editor = game::LevelEditor::new_from_path(&mut ui, file_path)?;
 
     enable_raw_mode()?;
-    execute!(ui.stdout, crossterm::terminal::EnterAlternateScreen)?;
+    execute!(ui.stdout, crossterm::terminal::EnterAlternateScreen, crossterm::event::EnableMouseCapture)?;
+
 
     let res = ui.run(&mut editor);
-    execute!(stdout, crossterm::terminal::LeaveAlternateScreen)?;
-    disable_raw_mode()?;
+    ui.restore_normal();
     res
 }
 

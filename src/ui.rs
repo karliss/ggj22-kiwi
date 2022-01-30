@@ -307,7 +307,7 @@ impl<'a> UiContext<'a> {
     pub fn restore_normal(&mut self) {
         execute!(self.stdout, crossterm::terminal::LeaveAlternateScreen);
         disable_raw_mode();
-        execute!(self.stdout, crossterm::cursor::Show, style::ResetColor, style::SetAttribute(Attribute::Reset));
+        execute!(self.stdout, crossterm::cursor::Show, style::ResetColor, style::SetAttribute(Attribute::Reset), crossterm::event::DisableMouseCapture);
         execute!(self.stdout, cursor::MoveToNextLine(1));
     }
 }
