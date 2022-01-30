@@ -61,6 +61,8 @@ fn play_levels() -> std::io::Result<()>
     let mut levels = LevelList{
         files: vec!["levels/l1".into(), "levels/l2".into()]
     };
+
+
     if let Ok(exe_path) = std::env::current_exe() {
         let folder = exe_path.parent().unwrap();
         let mut top_folder = folder.to_owned();
@@ -72,6 +74,22 @@ fn play_levels() -> std::io::Result<()>
         } else {
             eprintln!("Can't find level data");
             return Err(std::io::ErrorKind::Other.into());
+        }
+
+        let list_reader = std::fs::File::open(top_folder.join("levels/list.yaml")).map_err(|e| {
+            eprintln!("Failed to load level list 'levels/list.yaml': {}", e);
+            e
+        })?;
+        let yaml: serde_yaml::Result<LevelList> = serde_yaml::from_reader(list_reader);
+
+        match yaml {
+            Ok(res) => {
+                levels = res;
+            }
+            Err(e) => {
+                eprintln!("Failed to load level list 'levels/list.yaml': {}", e);
+                return Err(ErrorKind::Other.into());
+            }
         }
 
         for path in &mut levels.files {
