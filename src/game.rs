@@ -46,6 +46,17 @@ fn get_color(c: CellColor) -> Color {
     match c {
         CellColor::Black => Color::Black,
         CellColor::White => Color::White,
+        CellColor::LightGray => Color::Grey,
+        CellColor::DarkGray => Color::DarkGrey,
+    }
+}
+
+fn invert_color(c: CellColor) -> CellColor {
+    match c {
+        CellColor::Black => CellColor::White,
+        CellColor::White => CellColor::Black,
+        CellColor::LightGray => CellColor::LightGray,
+        CellColor::DarkGray => CellColor::DarkGray,
     }
 }
 
@@ -56,7 +67,7 @@ enum EditorMode {
     ErrorMessage,
     Paint,
     SetMarkers,
-    Play
+    Play,
 }
 
 #[derive(Debug, PartialEq, Eq, Copy, Clone)]
@@ -64,13 +75,17 @@ enum PaintMode {
     BlackBackgroundNormal,
     WhiteBackgroundNormal,
     Invert,
+    TextLightGray,
+    TextDarkGray,
+    BackgroundGray,
+    BackgroundDarkGray,
 }
 
 impl LevelEditor {
     pub fn new(ui: &mut UiContext) -> LevelEditor {
         let mut result = LevelEditor {
             id: ui.next_id(),
-            level: Level::new(50, 50),
+            level: Level::new(250, 250),
             cursor_pos: V2::new(),
             view_corner: V2::new(),
             wrap_pos: V2::new(),
@@ -193,7 +208,7 @@ impl LevelEditor {
     fn print_at(&self, ui: &mut UiContext, ps: V2, c: char, tColor: Option<Color>, bColor: Option<Color>) -> std::io::Result<()> {
         let visible_rect = self.get_view_rect();
         if !visible_rect.contains(ps) {
-            return Ok(())
+            return Ok(());
         }
 
         ui.goto(ps - self.view_corner);
@@ -323,13 +338,24 @@ impl LevelEditor {
                 cell.foreground = CellColor::Black;
             }
             PaintMode::Invert => {
-                if cell.background == CellColor::Black {
-                    cell.background = CellColor::White;
-                    cell.foreground = CellColor::Black;
-                } else if cell.background == CellColor::White {
-                    cell.background = CellColor::Black;
-                    cell.foreground = CellColor::White;
+                if is_base_color(cell.background) {
+                    cell.background = invert_color(cell.background);
                 }
+                if is_base_color(cell.foreground) {
+                    cell.foreground = invert_color(cell.foreground);
+                }
+            }
+            PaintMode::TextLightGray => {
+                cell.foreground = CellColor::LightGray;
+            }
+            PaintMode::TextDarkGray => {
+                cell.foreground = CellColor::DarkGray;
+            }
+            PaintMode::BackgroundGray => {
+                cell.background = CellColor::LightGray;
+            }
+            PaintMode::BackgroundDarkGray => {
+                cell.background = CellColor::DarkGray;
             }
         }
         self.level.set(pos, cell);
@@ -342,14 +368,27 @@ impl LevelEditor {
 
     fn handle_test_play(&mut self, ev: Option<UiEvent>) -> Option<UiEvent> {
         match ev {
-            Some(UiEvent{id: _, e : UiEventType::Canceled}) |
-            Some(UiEvent{id: _, e : UiEventType::Ok}) |
-            Some(UiEvent{id: _, e : UiEventType::Result(_)}) => {
+            Some(UiEvent { id: _, e: UiEventType::Canceled }) |
+            Some(UiEvent { id: _, e: UiEventType::Ok }) |
+            Some(UiEvent { id: _, e: UiEventType::Result(_) }) => {
                 self.mode = EditorMode::View;
                 self.event(UiEventType::Changed)
             }
             _ => ev
         }
+    }
+}
+
+fn letter_to_paintmode(c: char) -> PaintMode {
+    match c {
+        'z' => PaintMode::WhiteBackgroundNormal,
+        'x' => PaintMode::BlackBackgroundNormal,
+        'c' => PaintMode::Invert,
+        'v' => PaintMode::TextLightGray,
+        'b' => PaintMode::TextDarkGray,
+        'n' => PaintMode::BackgroundGray,
+        'm' => PaintMode::BackgroundDarkGray,
+        _ => PaintMode::WhiteBackgroundNormal
     }
 }
 
@@ -388,7 +427,7 @@ impl UiWidget for LevelEditor {
                 match e {
                     Event::Key(KeyEvent { code: KeyCode::Esc, modifiers: KeyModifiers::NONE }) => {
                         self.mode = EditorMode::View;
-                        return self.event(UiEventType::Changed)
+                        return self.event(UiEventType::Changed);
                     }
                     _ => {
                         let r = self.test_runer.input(e, ui);
@@ -560,16 +599,8 @@ impl UiWidget for LevelEditor {
                         self.event(UiEventType::Changed)
                     }
 
-                    Event::Key(KeyEvent { code: KeyCode::Char('z'), modifiers: KeyModifiers::NONE }) => {
-                        self.paintMode = PaintMode::BlackBackgroundNormal;
-                        self.event(UiEventType::Changed)
-                    }
-                    Event::Key(KeyEvent { code: KeyCode::Char('x'), modifiers: KeyModifiers::NONE }) => {
-                        self.paintMode = PaintMode::WhiteBackgroundNormal;
-                        self.event(UiEventType::Changed)
-                    }
-                    Event::Key(KeyEvent { code: KeyCode::Char('c'), modifiers: KeyModifiers::NONE }) => {
-                        self.paintMode = PaintMode::Invert;
+                    Event::Key(KeyEvent { code: KeyCode::Char(c @ ('z' | 'x' | 'c' | 'v' | 'b' | 'n' | 'm')), modifiers: KeyModifiers::NONE }) => {
+                        self.paintMode = letter_to_paintmode(*c);
                         self.event(UiEventType::Changed)
                     }
 
@@ -762,7 +793,6 @@ impl LevelRunner {
     }
 
 
-
     fn walk(&mut self, dir: V2) {
         let target = self.pos + dir;
         let bounds = self.level.bounds();
@@ -794,13 +824,17 @@ impl LevelRunner {
                     // basic push
                     let mut next2 = next_cell;
                     let mut target2 = target_cell;
-                    next2.letter =  ' ';
+                    next2.letter = ' ';
                     target2.letter = ' ';
                     self.level.set(target, target2);
                     self.level.set(target + dir, next2);
                     self.pos = target;
                     return;
                 }
+            }
+            if target_cell.foreground == CellColor::LightGray {
+                self.pos = target;
+                return;
             }
         } else {
             if is_base_color(here.background) && is_base_color(target_cell.background) && target_cell.letter == '@' {
@@ -814,17 +848,13 @@ impl LevelRunner {
                 return;
             }
         }
-
-
-
     }
 
-    fn move_with_ui(&mut self, dir: V2, ui: &mut UiContext)  {
+    fn move_with_ui(&mut self, dir: V2, ui: &mut UiContext) {
         self.walk(dir);
         self.keep_cursor_in_view();
         self.mark_refresh(true);
     }
-
 }
 
 impl UiWidget for LevelRunner {
@@ -876,7 +906,7 @@ impl UiWidget for LevelRunner {
     }
 
     fn get_id(&self) -> UiId {
-        return self.id
+        return self.id;
     }
 
     fn update(&mut self) -> Option<UiEvent> {

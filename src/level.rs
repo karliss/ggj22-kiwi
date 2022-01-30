@@ -6,6 +6,8 @@ use serde::{Serialize, Deserialize};
 pub enum CellColor {
     White,
     Black,
+    LightGray,
+    DarkGray,
 }
 
 #[derive(Copy, Clone, Serialize, Deserialize)]
