@@ -503,6 +503,7 @@ impl UiWidget for LevelEditor {
                     ui.stdout.flush()?
                 }
             }
+            self.need_refresh = false;
         }
         Ok(())
     }
@@ -1048,6 +1049,7 @@ impl UiWidget for LevelRunner {
             queue!(ui.stdout,Clear(ClearType::All));
             self.print_level(ui)?;
             ui.stdout.flush();
+            self.need_refresh = false;
         }
         Ok(())
     }

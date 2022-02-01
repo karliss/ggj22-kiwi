@@ -245,7 +245,7 @@ impl<'a> UiContext<'a> {
             let mut has_input = false;
             let mut retry = 25;
             while !has_input && retry > 0 {
-                if let Ok(true) = poll(Duration::from_millis(20)) {
+                if let Ok(true) = poll(Duration::from_millis(100)) {
                     // Process all available events in one go, to reduce the chance of situation
                     // where a lot of events are queued waiting for redraws. Otherwise likely
                     // to happen when scrolling mouse.
